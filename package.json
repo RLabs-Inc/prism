@@ -1,0 +1,88 @@
+{
+  "name": "@rlabs-inc/prism",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "CLI primitives for hackers. Light through a prism, data through the terminal. 22 modules, zero dependencies, built on Bun's native APIs.",
+  "main": "src/index.ts",
+  "module": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./writer": "./src/writer.ts",
+    "./style": "./src/style.ts",
+    "./box": "./src/box.ts",
+    "./table": "./src/table.ts",
+    "./markdown": "./src/markdown.ts",
+    "./spinner": "./src/spinner.ts",
+    "./progress": "./src/progress.ts",
+    "./badge": "./src/badge.ts",
+    "./text": "./src/text.ts",
+    "./log": "./src/log.ts",
+    "./list": "./src/list.ts",
+    "./columns": "./src/columns.ts",
+    "./keypress": "./src/keypress.ts",
+    "./prompt": "./src/prompt.ts",
+    "./banner": "./src/banner.ts",
+    "./timer": "./src/timer.ts",
+    "./highlight": "./src/highlight.ts",
+    "./args": "./src/args.ts",
+    "./repl": "./src/repl.ts",
+    "./live": "./src/live.ts",
+    "./statusbar": "./src/statusbar.ts"
+  },
+  "scripts": {
+    "dev": "bun run src/index.ts",
+    "build": "bun build src/index.ts --outdir dist --target bun",
+    "demo": "bun run demos/demo.ts",
+    "demo:all": "bun run demos/demo-all.ts",
+    "demo:frame": "bun run demos/demo-frame.ts",
+    "demo:repl": "bun run demos/demo-repl.ts",
+    "demo:spinner": "bun run demos/demo-spinner.ts"
+  },
+  "keywords": [
+    "cli",
+    "terminal",
+    "tui",
+    "ansi",
+    "spinner",
+    "progress",
+    "prompt",
+    "repl",
+    "hacking",
+    "bun",
+    "zero-dependencies",
+    "pipe-aware",
+    "syntax-highlighting",
+    "interactive",
+    "readline",
+    "statusbar",
+    "ascii-art",
+    "banner",
+    "table",
+    "markdown"
+  ],
+  "author": {
+    "name": "RLabs Inc",
+    "url": "https://github.com/RLabs-Inc"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/RLabs-Inc/prism.git"
+  },
+  "homepage": "https://github.com/RLabs-Inc/prism",
+  "bugs": {
+    "url": "https://github.com/RLabs-Inc/prism/issues"
+  },
+  "engines": {
+    "bun": ">=1.0.0"
+  },
+  "files": [
+    "src/",
+    "README.md",
+    "LICENSE"
+  ],
+  "devDependencies": {
+    "@types/bun": "latest"
+  }
+}
