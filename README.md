@@ -1,8 +1,6 @@
 # prism
 
-**CLI primitives for hackers.** Light through a prism, data through the terminal.
-
-22 modules. 45 spinners. 10 progress bar styles. 50+ exports. 4,000+ lines. **Zero external dependencies.**
+**CLI primitives for hackers.**
 
 Built entirely on Bun's native APIs — every string measurement, color conversion, and text wrap runs through Zig/SIMD-optimized internals.
 
@@ -19,9 +17,9 @@ bun demo           # original demo
 ## Design Philosophy
 
 - **CLI, not TUI** — output stays inline with terminal history. Pipes, composes, scrolls back. No alternate screen.
-- **Terminal-themed by default** — ANSI 16 codes respect your color scheme (sacred geometry, dracula, whatever you run). Exact RGB available when you need it via `.fg()` / `.bg()`.
+- **Terminal-themed by default** — ANSI 16 codes respect your terminal color scheme. Exact RGB available when you need it via `.fg()` / `.bg()`.
 - **Pipe-aware everything** — every module detects TTY vs pipe and degrades gracefully. Colors strip, animations become static text, links show URLs.
-- **Bun-native** — `Bun.color()`, `Bun.stringWidth()`, `Bun.stripANSI()`, `Bun.wrapAnsi()`, `Bun.markdown.render()`. We build on top of these, never reimplementing what Bun already optimized.
+- **Bun-native** — `Bun.color()`, `Bun.stringWidth()`, `Bun.stripANSI()`, `Bun.wrapAnsi()`, `Bun.markdown.render()`. Built on top of what Bun already optimized.
 
 ---
 
@@ -133,7 +131,7 @@ s.strikethrough("struck")
 
 ### Terminal-Themed Colors (ANSI 16)
 
-These respect your terminal's color scheme. If you're running a sacred geometry theme, `s.red` shows YOUR red.
+These respect your terminal's color scheme. `s.red` shows terminal defined red color.
 
 ```typescript
 // foreground
@@ -1153,7 +1151,7 @@ Output:
 
 ## args
 
-Declarative CLI argument parsing. Thin wrapper around `util.parseArgs` that auto-generates beautiful help text using prism's own display primitives. Prism eating its own dog food.
+Declarative CLI argument parsing.
 
 ```typescript
 import { args } from "prism/src"
@@ -1303,7 +1301,7 @@ args({
 
 ## repl
 
-The crown jewel of prism. A full interactive prompt system with line editing, history, tab completion, frame support (Claude Code-style dividers + status bars), and a Stage system that coordinates animated output with the frame.
+A full interactive prompt system with line editing, history, tab completion, frame support, and a Stage system that coordinates animated output with the frame.
 
 ```typescript
 import { readline, repl, type ReadlineOptions, type ReplOptions, type FrameConfig, type Stage } from "prism/src"
@@ -1394,7 +1392,7 @@ await repl({
 
 ### Frame System
 
-Wrap the input with dividers and status bars — the Claude Code layout. The frame **erases** on submit (never freezes into scrollback). Only command output appears in terminal history.
+Wrap the input with dividers and status bars. The frame **erases** on submit (never freezes into scrollback). Only command output appears in terminal history.
 
 ```typescript
 import { statusbar, termWidth } from "prism/src"
@@ -1452,8 +1450,6 @@ Terminal layout:
   hunt │ 2 messages │ 54s    230 tokens
   -- INSERT --               exit to quit
 ```
-
-Only ONE frame at the very bottom. No frozen frame copies in scrollback.
 
 ### Stage System
 
