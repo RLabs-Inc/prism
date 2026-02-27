@@ -1,6 +1,6 @@
 {
   "name": "@rlabs-inc/prism",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "type": "module",
   "description": "CLI primitives for hackers. Light through a prism, data through the terminal. 22 modules, zero dependencies, built on Bun's native APIs.",
   "main": "src/index.ts",
