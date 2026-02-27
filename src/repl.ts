@@ -1,25 +1,11 @@
 // prism/repl - interactive prompt loop
-// the crown jewel: turns CLI primitives into a living interactive experience
-// stays CLI - everything scrolls inline with terminal history, no alternate screen
-//
 // two exports:
 //   readline() - single prompt with full line editing, history, completion
 //   repl()     - persistent prompt loop with slash commands and abort support
-//
-// frame support: wrap the input with dividers and status bars
-// the frame renders once per cycle, only the input line re-renders on keystrokes
-// on submit, the frame ERASES (not freezes) - only command output goes to scrollback
-//
-// stage system: during command execution, a Stage object coordinates live components
-// (activity, section) with the frame, so animated output appears ABOVE the frame
-// while the frame stays pinned at the bottom
-//
 // built on raw stdin, not node readline - full control, zero deps
 
 import { s } from "./style"
 import { isTTY, termWidth } from "./writer"
-import { activity as createActivity, section as createSection } from "./live"
-import type { Activity, ActivityOptions, Section, SectionOptions, FooterConfig } from "./live"
 
 // ── Types ─────────────────────────────────────────────────
 
@@ -47,36 +33,17 @@ export interface CommandDef {
   description?: string
   /** Aliases (e.g., ["h"] for "help") */
   aliases?: string[]
-  /** Handler receives args, abort signal, and stage for frame-aware output */
-  handler: (args: string, signal: AbortSignal, stage: Stage) => Promise<void> | void
+  /** Handler receives args and abort signal */
+  handler: (args: string, signal: AbortSignal) => Promise<void> | void
   /** Hide from /help listing */
   hidden?: boolean
-}
-
-export interface FrameConfig {
-  /** Lines rendered above the input (e.g., dividers) */
-  above: (() => string)[]
-  /** Lines rendered below the input (e.g., dividers, status bars) */
-  below: (() => string)[]
-}
-
-/** Stage: coordinates output with the frame during command execution */
-export interface Stage {
-  /** Write text above the frame (freezes into scrollback) */
-  print(text: string): void
-  /** Create an activity spinner above the frame */
-  activity(text: string, options?: ActivityOptions): Activity
-  /** Create a multi-line section above the frame */
-  section(title: string, options?: SectionOptions): Section
-  /** Clean up any remaining frame/state (called on exit, error, clear) */
-  cleanup(): void
 }
 
 export interface ReplOptions {
   /** Prompt string or function for dynamic prompts */
   prompt?: PromptFn
   /** Called when user submits non-command input. Return string to auto-print. */
-  onInput: (input: string, signal: AbortSignal, stage: Stage) => Promise<string | void> | string | void
+  onInput: (input: string, signal: AbortSignal) => Promise<string | void> | string | void
   /** Greeting shown when repl starts */
   greeting?: string
   /** Slash commands (e.g., { help: { handler: () => {...} } }) */
@@ -97,10 +64,6 @@ export interface ReplOptions {
   onExit?: () => void
   /** Prompt color function (default: s.cyan) */
   promptColor?: (text: string) => string
-  /** Frame: wrap input with dividers and status bars */
-  frame?: FrameConfig
-  /** Called when user types while onInput is running (concurrent steering message) */
-  onSteer?: (message: string, signal: AbortSignal) => void
 }
 
 // ── Internal ──────────────────────────────────────────────
@@ -109,19 +72,6 @@ type InputAction =
   | { action: "submit"; value: string }
   | { action: "cancel" }    // Ctrl+C on empty line
   | { action: "eof" }       // Ctrl+D on empty line
-  | { action: "abort" }     // externally aborted (e.g., agent finished during steering)
-
-// ── Render hooks ──────────────────────────────────────────
-// allow frame.ts to plug into readInput without modifying core logic
-
-interface RenderHooks {
-  /** Custom render: called instead of default single-line render */
-  onRender?: (state: { buffer: string; cursor: number; prompt: string; promptWidth: number; hint?: string }) => void
-  /** Called before resolving (submit/cancel/eof) to clean up frame positioning */
-  onCleanup?: (action: "submit" | "cancel" | "eof", buffer: string) => void
-  /** Called when input is cleared (Ctrl+C clear, Ctrl+L) to reset frame state */
-  onClear?: () => void
-}
 
 // ── Helpers ───────────────────────────────────────────────
 
@@ -149,250 +99,6 @@ function commonPrefix(strings: string[]): string {
   return prefix
 }
 
-// ── Frame renderer ────────────────────────────────────────
-// creates render hooks for framed input
-// renders: above lines → input → below lines
-// on keystroke: re-renders the entire frame (handles wrapping correctly)
-// on submit: ERASES the frame (does not freeze it into scrollback)
-
-function createFrameHooks(frame: FrameConfig, promptColor: (t: string) => string): RenderHooks {
-  const aboveCount = frame.above.length
-  const belowCount = frame.below.length
-  let prevCursorRow = 0    // which row of the input the cursor is on
-  let prevInputRows = 1    // total rows the input occupies (wrapping)
-  let firstRender = true
-  let lastPrompt = ""       // captured from onRender for use in onCleanup
-
-  return {
-    onRender(state) {
-      lastPrompt = state.prompt  // capture for onCleanup
-      const cols = termWidth()
-      const prompt = promptColor(state.prompt)
-      const hintText = state.hint ? s.dim("  " + state.hint) : ""
-
-      // calculate input dimensions
-      const displayWidth = Bun.stringWidth(state.buffer)
-      const hintWidth = state.hint ? Bun.stringWidth("  " + state.hint) : 0
-      const totalInputWidth = state.promptWidth + displayWidth + hintWidth
-      const inputRows = cols > 0 ? Math.max(1, Math.ceil(totalInputWidth / cols)) : 1
-
-      // move to origin of entire frame
-      if (!firstRender) {
-        const moveUp = aboveCount + prevCursorRow
-        if (moveUp > 0) console.write(`\x1b[${moveUp}A`)
-      }
-      // clear from origin to end of screen
-      console.write("\r\x1b[J")
-
-      // draw above lines
-      for (const fn of frame.above) {
-        console.write(fn() + "\n")
-      }
-
-      // draw input (terminal wraps naturally at width)
-      console.write(prompt + state.buffer + hintText)
-
-      // always newline after input — terminal may or may not have wrapped at boundary
-      console.write("\n")
-
-      // draw below lines
-      for (const fn of frame.below) {
-        console.write(fn() + "\n")
-      }
-
-      // navigate cursor to target position within input
-      const cursorDisplay = state.buffer.slice(0, state.cursor)
-      const targetLinear = state.promptWidth + Bun.stringWidth(cursorDisplay)
-      const targetRow = cols > 0 ? Math.floor(targetLinear / cols) : 0
-      const targetCol = cols > 0 ? targetLinear % cols : targetLinear
-
-      // current position: line after last below line
-      // need to go up: (inputRows - targetRow) + belowCount
-      const linesUp = (inputRows - targetRow) + belowCount
-      if (linesUp > 0) console.write(`\x1b[${linesUp}A`)
-      console.write("\r")
-      if (targetCol > 0) console.write(`\x1b[${targetCol}C`)
-
-      prevCursorRow = targetRow
-      prevInputRows = inputRows
-      firstRender = false
-    },
-
-    onCleanup(action, buffer) {
-      // erase the ENTIRE frame from screen (don't freeze it)
-      const moveUp = aboveCount + prevCursorRow
-      if (moveUp > 0) console.write(`\x1b[${moveUp}A`)
-      console.write("\r\x1b[J")
-
-      if (action === "submit" && buffer.trim()) {
-        // write frozen input line to scrollback (just prompt + what they typed)
-        const prompt = promptColor(lastPrompt)
-        console.write(prompt + buffer + "\n")
-      }
-    },
-
-    onClear() {
-      // erase the entire frame
-      const moveUp = aboveCount + prevCursorRow
-      if (moveUp > 0) console.write(`\x1b[${moveUp}A`)
-      console.write("\r\x1b[J")
-
-      // reset tracking for fresh frame
-      prevCursorRow = 0
-      prevInputRows = 1
-      firstRender = true
-    },
-  }
-}
-
-// ── Stage implementations ─────────────────────────────────
-
-/** No-op stage for when there's no frame - output goes directly to stdout */
-class NoopStage implements Stage {
-  print(text: string) {
-    console.write(text)
-    if (!text.endsWith("\n")) console.write("\n")
-  }
-
-  activity(text: string, options?: ActivityOptions): Activity {
-    return createActivity(text, options)
-  }
-
-  section(title: string, options?: SectionOptions): Section {
-    return createSection(title, options)
-  }
-
-  cleanup() {
-    // no-op — nothing to clean up without a frame
-  }
-}
-
-/** Frame-aware stage - coordinates output above the persistent frame */
-class FrameStage implements Stage {
-  private frameFns: FrameConfig
-  private promptStr: string
-  private promptColor: (t: string) => string
-  private frameHeight: number
-  private frameDrawn: boolean = false
-
-  // Steering support: when steerText is not null, the frame shows a steering prompt
-  private steerText: string | null = null
-  private steerCursorPos: number = 0
-  private cursorInSteer: boolean = false
-
-  constructor(frame: FrameConfig, prompt: string, promptColor: (t: string) => string) {
-    this.frameFns = frame
-    this.promptStr = prompt
-    this.promptColor = promptColor
-    this.frameHeight = frame.above.length + 1 + frame.below.length
-
-    // draw initial frame
-    this.drawFrame()
-  }
-
-  /** Set steering input state (text and cursor position) */
-  setSteer(text: string, cursor: number) {
-    this.steerText = text
-    this.steerCursorPos = cursor
-  }
-
-  /** Clear steering state */
-  clearSteer() {
-    this.steerText = null
-    this.steerCursorPos = 0
-    this.cursorInSteer = false
-  }
-
-  /** Erase and redraw the frame in place */
-  refresh() {
-    this.eraseFrame()
-    this.drawFrame()
-  }
-
-  private renderFrameLines(): string[] {
-    const promptLine = this.steerText !== null
-      ? s.dim(">> ") + this.steerText
-      : this.promptColor(this.promptStr)
-    return [
-      ...this.frameFns.above.map(fn => fn()),
-      promptLine,
-      ...this.frameFns.below.map(fn => fn()),
-    ]
-  }
-
-  private drawFrame() {
-    const lines = this.renderFrameLines()
-    for (const line of lines) {
-      console.write(`\x1b[2K${line}\n`)
-    }
-    // move cursor back to top of frame (invariant: cursor at frame start)
-    if (lines.length > 0) console.write(`\x1b[${lines.length}A`)
-    this.frameDrawn = true
-    this.cursorInSteer = false
-
-    // Position cursor in steering input if active
-    if (this.steerText !== null) {
-      const aboveCount = this.frameFns.above.length
-      if (aboveCount > 0) console.write(`\x1b[${aboveCount}B`)
-      const steerPromptWidth = 3 // ">> " visual width
-      const cursorDisplay = this.steerText.slice(0, this.steerCursorPos)
-      const col = steerPromptWidth + Bun.stringWidth(cursorDisplay)
-      console.write("\r")
-      if (col > 0) console.write(`\x1b[${col}C`)
-      this.cursorInSteer = true
-    }
-  }
-
-  private eraseFrame() {
-    if (!this.frameDrawn) return
-    // If cursor was positioned in steer line, move back to frame start
-    if (this.cursorInSteer) {
-      const aboveCount = this.frameFns.above.length
-      if (aboveCount > 0) console.write(`\x1b[${aboveCount}A`)
-    }
-    console.write("\r\x1b[J")
-    this.frameDrawn = false
-    this.cursorInSteer = false
-  }
-
-  private createFooter(): FooterConfig {
-    return {
-      render: () => this.renderFrameLines(),
-      onEnd: () => {
-        this.frameDrawn = false
-        this.drawFrame()
-      },
-    }
-  }
-
-  print(text: string) {
-    this.eraseFrame()
-    console.write(text)
-    if (!text.endsWith("\n")) console.write("\n")
-    this.drawFrame()
-  }
-
-  activity(text: string, options: ActivityOptions = {}): Activity {
-    this.eraseFrame()
-    return createActivity(text, {
-      ...options,
-      footer: this.createFooter(),
-    })
-  }
-
-  section(title: string, options: SectionOptions = {}): Section {
-    this.eraseFrame()
-    return createSection(title, {
-      ...options,
-      footer: this.createFooter(),
-    })
-  }
-
-  cleanup() {
-    this.eraseFrame()
-  }
-}
-
 // ── Core input reader ─────────────────────────────────────
 
 interface InputConfig {
@@ -405,10 +111,6 @@ interface InputConfig {
   mask?: string
   /** When true, Ctrl+C with text clears line instead of resolving */
   clearOnCancel: boolean
-  /** Optional render hooks for frame support */
-  hooks?: RenderHooks
-  /** External abort signal — resolves with { action: "abort" } when fired */
-  abort?: AbortSignal
 }
 
 async function readInput(config: InputConfig): Promise<InputAction> {
@@ -439,18 +141,6 @@ async function readInput(config: InputConfig): Promise<InputAction> {
 
   function render(hint?: string) {
     const display = config.mask ? config.mask.repeat(buffer.length) : buffer
-
-    // delegate to render hook if provided (frame mode)
-    if (config.hooks?.onRender) {
-      config.hooks.onRender({
-        buffer: display,
-        cursor,
-        prompt: resolvePrompt(config.prompt),
-        promptWidth: getPromptWidth(),
-        hint,
-      })
-      return
-    }
 
     // ── multi-line aware render ──────────────────────────
     // handles input that wraps past terminal width
@@ -615,11 +305,7 @@ async function readInput(config: InputConfig): Promise<InputAction> {
       // ── Enter: submit ─────────────────────────────────
       if (data === "\r" || data === "\n") {
         pushHistory()
-        if (config.hooks?.onCleanup) {
-          config.hooks.onCleanup("submit", buffer)
-        } else {
-          exitContent()
-        }
+        exitContent()
         done({ action: "submit", value: buffer })
         return
       }
@@ -628,8 +314,7 @@ async function readInput(config: InputConfig): Promise<InputAction> {
       if (data === "\x03") {
         if (config.clearOnCancel && buffer.length > 0) {
           // clear line and continue reading
-          if (!config.hooks) console.write(s.dim("^C\n"))
-          config.hooks?.onClear?.()
+          console.write(s.dim("^C\n"))
           buffer = ""
           cursor = 0
           historyIndex = -1
@@ -638,11 +323,7 @@ async function readInput(config: InputConfig): Promise<InputAction> {
           return
         }
         // signal cancel
-        if (config.hooks?.onCleanup) {
-          config.hooks.onCleanup("cancel", buffer)
-        } else {
-          exitContent()
-        }
+        exitContent()
         done({ action: "cancel" })
         return
       }
@@ -650,11 +331,7 @@ async function readInput(config: InputConfig): Promise<InputAction> {
       // ── Ctrl+D ────────────────────────────────────────
       if (data === "\x04") {
         if (buffer.length === 0) {
-          if (config.hooks?.onCleanup) {
-            config.hooks.onCleanup("eof", buffer)
-          } else {
-            console.write("\n")
-          }
+          console.write("\n")
           done({ action: "eof" })
           return
         }
@@ -717,7 +394,6 @@ async function readInput(config: InputConfig): Promise<InputAction> {
       // ── Ctrl+L: clear screen ──────────────────────────
       if (data === "\x0c") {
         console.write("\x1b[2J\x1b[H")
-        config.hooks?.onClear?.()
         prevCursorRow = 0
         render()
         return
@@ -736,17 +412,6 @@ async function readInput(config: InputConfig): Promise<InputAction> {
     }
 
     process.stdin.on("data", handler)
-
-    // External abort support
-    if (config.abort) {
-      if (config.abort.aborted) {
-        done({ action: "abort" })
-        return
-      }
-      config.abort.addEventListener("abort", () => {
-        done({ action: "abort" })
-      }, { once: true })
-    }
   })
 }
 
@@ -793,16 +458,6 @@ export async function readline(options: ReadlineOptions = {}): Promise<string> {
  * async handlers, history, tab completion (auto-completes
  * command names), Ctrl+C to cancel/exit, Ctrl+D to exit.
  *
- * Frame support: pass frame.above and frame.below to wrap the
- * input with dividers, status bars, mode indicators - just like
- * Claude Code's interface. The frame ERASES on submit (not freezes)
- * so only command output goes to scrollback.
- *
- * Stage support: command handlers receive a Stage object for
- * frame-aware output. Use stage.print(), stage.activity(), and
- * stage.section() to render output above the frame while keeping
- * the frame pinned at the bottom.
- *
  * The handler gets an AbortSignal - first Ctrl+C during
  * processing aborts, second Ctrl+C force-exits.
  */
@@ -820,8 +475,6 @@ export async function repl(options: ReplOptions): Promise<void> {
     beforePrompt,
     onExit,
     promptColor = s.cyan,
-    frame,
-    onSteer,
   } = options
 
   // shared history array
@@ -844,10 +497,10 @@ export async function repl(options: ReplOptions): Promise<void> {
       const helpDef: CommandDef = {
         description: "Show available commands",
         aliases: ["h", "?"],
-        handler: (_args, _signal, stage) => {
+        handler: () => {
           const entries = Object.entries(commands).filter(([, d]) => !d.hidden)
           if (entries.length === 0) {
-            stage.print(s.dim("  No commands available."))
+            console.write(s.dim("  No commands available.") + "\n")
             return
           }
           const maxLen = Math.max(...entries.map(([n]) => n.length))
@@ -860,7 +513,7 @@ export async function repl(options: ReplOptions): Promise<void> {
             lines.push(`  ${s.cyan((commandPrefix + name).padEnd(maxLen + commandPrefix.length + 2))}${desc}${aliases}`)
           }
           lines.push("")
-          stage.print(lines.join("\n"))
+          console.write(lines.join("\n"))
         },
       }
       commandMap.set("help", { name: "help", def: helpDef })
@@ -888,7 +541,6 @@ export async function repl(options: ReplOptions): Promise<void> {
 
   if (!isTTY) {
     if (greeting) console.write(greeting + "\n")
-    const noopStage = new NoopStage()
     const text = await Bun.stdin.text()
     for (const line of text.split("\n")) {
       const trimmed = line.trim()
@@ -902,12 +554,12 @@ export async function repl(options: ReplOptions): Promise<void> {
         const cmdArgs = spaceIdx === -1 ? "" : rest.slice(spaceIdx + 1).trim()
         const cmd = commandMap.get(cmdName)
         if (cmd) {
-          await cmd.def.handler(cmdArgs, new AbortController().signal, noopStage)
+          await cmd.def.handler(cmdArgs, new AbortController().signal)
           continue
         }
       }
 
-      const result = await onInput(trimmed, new AbortController().signal, noopStage)
+      const result = await onInput(trimmed, new AbortController().signal)
       if (typeof result === "string") console.write(result + "\n")
     }
     onExit?.()
@@ -925,9 +577,6 @@ export async function repl(options: ReplOptions): Promise<void> {
   while (true) {
     beforePrompt?.()
 
-    // create frame hooks for this cycle (fresh state each time)
-    const hooks = frame ? createFrameHooks(frame, promptColor) : undefined
-
     const result = await readInput({
       prompt: promptOpt,
       promptColor,
@@ -936,7 +585,6 @@ export async function repl(options: ReplOptions): Promise<void> {
       historySize,
       completion: replCompletion,
       clearOnCancel: true,
-      hooks,
     })
 
     // ── Ctrl+D: immediate exit ────────────────────────
@@ -963,11 +611,6 @@ export async function repl(options: ReplOptions): Promise<void> {
     // exit commands
     if (exitCommands.includes(input.toLowerCase())) break
 
-    // ── create stage for command execution ─────────────
-    const stage = frame
-      ? new FrameStage(frame, resolvePrompt(promptOpt), promptColor)
-      : new NoopStage()
-
     // ── slash commands ────────────────────────────────
     if (input.startsWith(commandPrefix) && commands) {
       const rest = input.slice(commandPrefix.length)
@@ -988,232 +631,50 @@ export async function repl(options: ReplOptions): Promise<void> {
         process.on("SIGINT", onSigInt)
 
         try {
-          await cmd.def.handler(cmdArgs, controller.signal, stage)
+          await cmd.def.handler(cmdArgs, controller.signal)
         } catch (err) {
           if ((err as Error)?.name !== "AbortError") {
-            stage.print(`${s.red("✗")} ${(err as Error)?.message ?? err}`)
+            console.write(`${s.red("✗")} ${(err as Error)?.message ?? err}\n`)
           }
         } finally {
           process.removeListener("SIGINT", onSigInt)
         }
 
-        stage.cleanup()
         continue
       }
 
       // unknown command
-      stage.print(`${s.red("✗")} Unknown command: ${s.bold(commandPrefix + cmdName)}`)
+      console.write(`${s.red("✗")} Unknown command: ${s.bold(commandPrefix + cmdName)}\n`)
       if (commandMap.size > 0) {
-        stage.print(s.dim(`  Type ${commandPrefix}help for available commands.`))
+        console.write(s.dim(`  Type ${commandPrefix}help for available commands.`) + "\n")
       }
-      stage.cleanup()
       continue
     }
 
     // ── regular input: call handler with abort support ─
     const controller = new AbortController()
     let forceExit = false
-
-    if (onSteer && frame && stage instanceof FrameStage) {
-      // ── steering mode: accept input while handler runs ──
-      const stageFs = stage
-
-      const handlerPromise = (async () => {
-        try {
-          const output = await onInput(input, controller.signal, stage)
-          if (typeof output === "string" && output) {
-            stage.print(output)
-          }
-        } catch (err) {
-          if ((err as Error)?.name !== "AbortError") {
-            stage.print(`${s.red("✗")} ${(err as Error)?.message ?? err}`)
-          }
-        }
-      })()
-
-      // Steering input loop via raw stdin
-      let steerBuffer = ""
-      let steerCursor = 0
-      let handlerDone = false
-
-      stageFs.setSteer(steerBuffer, steerCursor)
-      stageFs.refresh()
-
-      await new Promise<void>((steerResolve) => {
-        let steerResolved = false
-
-        function steerDone() {
-          if (steerResolved) return
-          steerResolved = true
-          process.stdin.removeListener("data", steerHandler)
-          process.stdin.pause()
-          process.stdin.setRawMode(false)
-          stageFs.clearSteer()
-          steerResolve()
-        }
-
-        function updateDisplay() {
-          stageFs.setSteer(steerBuffer, steerCursor)
-          stageFs.refresh()
-        }
-
-        function steerHandler(data: string) {
-          if (handlerDone) { steerDone(); return }
-
-          // Enter: send steering message
-          if (data === "\r" || data === "\n") {
-            if (steerBuffer.trim()) {
-              const msg = steerBuffer.trim()
-              steerBuffer = ""
-              steerCursor = 0
-              stageFs.setSteer(steerBuffer, steerCursor)
-              stageFs.print(s.dim(`  >> ${msg}`))
-              onSteer(msg, controller.signal)
-            }
-            return
-          }
-
-          // Ctrl+C: clear buffer or abort agent
-          if (data === "\x03") {
-            if (steerBuffer.length > 0) {
-              steerBuffer = ""
-              steerCursor = 0
-              updateDisplay()
-              return
-            }
-            if (forceExit) {
-              steerDone()
-              console.write("\n")
-              process.exit(130)
-            }
-            controller.abort()
-            forceExit = true
-            steerBuffer = ""
-            steerCursor = 0
-            stageFs.setSteer(steerBuffer, steerCursor)
-            stageFs.print(s.dim("  (interrupted - Ctrl+C again to force exit)"))
-            return
-          }
-
-          // Ctrl+D on empty: ignore in steering
-          if (data === "\x04" && steerBuffer.length === 0) return
-
-          // Backspace
-          if (data === "\x7f") {
-            if (steerCursor > 0) {
-              steerBuffer = steerBuffer.slice(0, steerCursor - 1) + steerBuffer.slice(steerCursor)
-              steerCursor--
-              updateDisplay()
-            }
-            return
-          }
-
-          // Delete / Ctrl+D with content
-          if (data === "\x1b[3~" || (data === "\x04" && steerCursor < steerBuffer.length)) {
-            if (steerCursor < steerBuffer.length) {
-              steerBuffer = steerBuffer.slice(0, steerCursor) + steerBuffer.slice(steerCursor + 1)
-              updateDisplay()
-            }
-            return
-          }
-
-          // Arrow Right
-          if (data === "\x1b[C") {
-            if (steerCursor < steerBuffer.length) { steerCursor++; updateDisplay() }
-            return
-          }
-
-          // Arrow Left
-          if (data === "\x1b[D") {
-            if (steerCursor > 0) { steerCursor--; updateDisplay() }
-            return
-          }
-
-          // Home / Ctrl+A
-          if (data === "\x01" || data === "\x1b[H") {
-            steerCursor = 0; updateDisplay(); return
-          }
-
-          // End / Ctrl+E
-          if (data === "\x05" || data === "\x1b[F") {
-            steerCursor = steerBuffer.length; updateDisplay(); return
-          }
-
-          // Ctrl+U: clear before cursor
-          if (data === "\x15") {
-            steerBuffer = steerBuffer.slice(steerCursor)
-            steerCursor = 0
-            updateDisplay()
-            return
-          }
-
-          // Ctrl+K: clear after cursor
-          if (data === "\x0b") {
-            steerBuffer = steerBuffer.slice(0, steerCursor)
-            updateDisplay()
-            return
-          }
-
-          // Ctrl+W: delete word back
-          if (data === "\x17") {
-            const start = steerCursor
-            while (steerCursor > 0 && steerBuffer[steerCursor - 1] === " ") steerCursor--
-            while (steerCursor > 0 && steerBuffer[steerCursor - 1] !== " ") steerCursor--
-            steerBuffer = steerBuffer.slice(0, steerCursor) + steerBuffer.slice(start)
-            updateDisplay()
-            return
-          }
-
-          // Regular characters / paste
-          if (!data.startsWith("\x1b") && data.charCodeAt(0) >= 32) {
-            const clean = data.replace(/\r?\n/g, " ")
-            steerBuffer = steerBuffer.slice(0, steerCursor) + clean + steerBuffer.slice(steerCursor)
-            steerCursor += clean.length
-            updateDisplay()
-            return
-          }
-
-          // Unhandled escape sequences: ignore
-        }
-
-        process.stdin.setRawMode(true)
-        process.stdin.resume()
-        process.stdin.setEncoding("utf8")
-        process.stdin.on("data", steerHandler)
-
-        handlerPromise.finally(() => {
-          handlerDone = true
-          steerDone()
-        })
-      })
-
-      await handlerPromise
-
-    } else {
-      // ── no steering: original behavior ──
-      const onSigInt = () => {
-        if (forceExit) { console.write("\n"); process.exit(130) }
-        controller.abort()
-        forceExit = true
-        console.write(s.dim("\n(interrupted - Ctrl+C again to force exit)") + "\n")
-      }
-      process.on("SIGINT", onSigInt)
-
-      try {
-        const output = await onInput(input, controller.signal, stage)
-        if (typeof output === "string" && output) {
-          stage.print(output)
-        }
-      } catch (err) {
-        if ((err as Error)?.name !== "AbortError") {
-          stage.print(`${s.red("✗")} ${(err as Error)?.message ?? err}`)
-        }
-      } finally {
-        process.removeListener("SIGINT", onSigInt)
-      }
+    const onSigInt = () => {
+      if (forceExit) { console.write("\n"); process.exit(130) }
+      controller.abort()
+      forceExit = true
+      console.write(s.dim("\n(interrupted - Ctrl+C again to force exit)") + "\n")
     }
+    process.on("SIGINT", onSigInt)
 
-    stage.cleanup()
+    try {
+      const output = await onInput(input, controller.signal)
+      if (typeof output === "string" && output) {
+        console.write(output)
+        if (!output.endsWith("\n")) console.write("\n")
+      }
+    } catch (err) {
+      if ((err as Error)?.name !== "AbortError") {
+        console.write(`${s.red("✗")} ${(err as Error)?.message ?? err}\n`)
+      }
+    } finally {
+      process.removeListener("SIGINT", onSigInt)
+    }
   }
 
   onExit?.()

@@ -1,8 +1,8 @@
 {
   "name": "@rlabs-inc/prism",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
-  "description": "CLI primitives for hackers. Light through a prism, data through the terminal. 22 modules, zero dependencies, built on Bun's native APIs.",
+  "description": "CLI primitives for hackers. Light through a prism, data through the terminal. 24 modules, zero dependencies, built on Bun's native APIs.",
   "main": "src/index.ts",
   "module": "src/index.ts",
   "types": "src/index.ts",
@@ -28,7 +28,9 @@
     "./args": "./src/args.ts",
     "./repl": "./src/repl.ts",
     "./live": "./src/live.ts",
-    "./statusbar": "./src/statusbar.ts"
+    "./statusbar": "./src/statusbar.ts",
+    "./layout": "./src/layout.ts",
+    "./stream": "./src/stream.ts"
   },
   "scripts": {
     "dev": "bun run src/index.ts",

@@ -54,10 +54,16 @@ export { highlight } from "./highlight"
 export { args, type ArgsConfig, type ArgsResult, type FlagDef, type CommandDef as ArgCommandDef } from "./args"
 
 // REPL
-export { readline, repl, type ReadlineOptions, type CommandDef, type ReplOptions, type FrameConfig, type Stage } from "./repl"
+export { readline, repl, type ReadlineOptions, type CommandDef, type ReplOptions } from "./repl"
 
 // Live components
 export { activity, section, type ActivityOptions, type Activity, type SectionOptions, type Section, type FooterConfig } from "./live"
 
 // Status bar
 export { statusbar, type StatusBarOptions } from "./statusbar"
+
+// Layout
+export { layout, type Layout, type LayoutOptions, type ActiveRender, type LayoutActivityOptions, type LayoutSectionOptions, type LayoutStreamOptions } from "./layout"
+
+// Stream
+export { stream, type Stream, type StreamOptions } from "./stream"

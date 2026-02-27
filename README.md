@@ -43,9 +43,11 @@ bun demo           # original demo
 | [`prompt`](#prompt) | input | Confirm, input, password, select, multiselect |
 | [`banner`](#banner) | display | Large block-letter text (5 render styles) |
 | [`timer`](#timer) | utility | Stopwatch, countdown, benchmark helper |
+| [`layout`](#layout) | composition | Two-zone terminal manager (output + active) |
+| [`stream`](#stream) | composition | Buffered streaming text with line flushing |
 | [`highlight`](#highlight) | rendering | Syntax highlighting for 7 languages |
 | [`args`](#args) | parsing | Declarative CLI args with auto-generated help |
-| [`repl`](#repl) | interactive | Readline, REPL loop, frame system, Stage |
+| [`repl`](#repl) | interactive | Readline and REPL loop with slash commands |
 | [`live`](#live) | interactive | Activity spinners, multi-line sections |
 | [`statusbar`](#statusbar) | interactive | Left/right aligned terminal status line |
 
@@ -1301,10 +1303,10 @@ args({
 
 ## repl
 
-A full interactive prompt system with line editing, history, tab completion, frame support, and a Stage system that coordinates animated output with the frame.
+Interactive prompt system with full line editing, history, tab completion, and slash commands. Pure input primitives — compose with [`layout`](#layout) for framed UIs.
 
 ```typescript
-import { readline, repl, type ReadlineOptions, type ReplOptions, type FrameConfig, type Stage } from "@rlabs-inc/prism"
+import { readline, repl, type ReadlineOptions, type ReplOptions, type CommandDef } from "@rlabs-inc/prism"
 ```
 
 ### readline
@@ -1344,14 +1346,14 @@ const cmd = await readline({
 
 ### repl
 
-Run an interactive prompt loop with slash commands, abort support, and optional frame.
+Run an interactive prompt loop with slash commands and abort support.
 
 ```typescript
 await repl({
   prompt: "❯ ",
   greeting: "Welcome to hunt interactive",
 
-  onInput: async (input, signal, stage) => {
+  onInput: async (input, signal) => {
     // called for non-command input
     // return a string to auto-print it
     return `You said: ${input}`
@@ -1361,8 +1363,8 @@ await repl({
     scan: {
       description: "Run a network scan",
       aliases: ["s"],
-      handler: async (args, signal, stage) => {
-        const sec = stage.section("Scanning...")
+      handler: async (args, signal) => {
+        const sec = section("Scanning...")
         // ... work ...
         sec.done("Complete")
       },
@@ -1390,139 +1392,65 @@ await repl({
 // typing "nm" + Tab → nmap
 ```
 
-### Frame System
-
-Wrap the input with dividers and status bars. The frame **erases** on submit (never freezes into scrollback). Only command output appears in terminal history.
+**Lifecycle hooks:**
 
 ```typescript
-import { statusbar, termWidth } from "@rlabs-inc/prism"
-
-const frame: FrameConfig = {
-  above: [
-    () => s.dim("─".repeat(termWidth())),       // divider above input
-  ],
-  below: [
-    () => s.dim("─".repeat(termWidth())),       // divider below input
-    () => statusbar({                            // status bar
-      left: [
-        { text: "hunt", color: s.cyan },
-        { text: `${messageCount} messages` },
-      ],
-      right: { text: `${tokenCount} tokens`, color: s.dim },
-    }),
-    () => statusbar({                            // mode indicator
-      left: [{ text: "-- INSERT --", color: s.bold }],
-      right: { text: "exit to quit", color: s.dim },
-    }),
-  ],
-}
-
-await repl({ prompt: "❯ ", frame, onInput: ... })
+await repl({
+  beforePrompt: () => { /* called before each prompt */ },
+  onExit: () => { /* called when repl exits */ },
+  exitCommands: ["exit", "quit"],     // strings that exit (default)
+  commandPrefix: "/",                 // command prefix (default: "/")
+  history: true,                      // enable history (default: true)
+})
 ```
 
-Terminal layout:
-```
-────────────────────────────────────────
-❯ type here, frame stays pinned
-────────────────────────────────────────
-  hunt │ 3 messages │ 42s    150 tokens
-  -- INSERT --               exit to quit
-```
+**Pipe support:** When not a TTY, reads piped stdin line-by-line, dispatches commands, calls `onInput` for regular lines.
 
-**What happens on submit:**
-1. Frame erases entirely (dividers, status bars — all gone)
-2. Frozen input line writes to scrollback: `❯ /scan`
-3. Command handler runs with Stage for output
-4. After handler completes, fresh frame redraws for next input
+### Composing with layout
 
-**Scrollback looks clean:**
-```
-❯ /scan
-✓ Scan complete: 3 open ports 1.8s
-  ⎿ 22/tcp ssh
-  ⎿ 80/tcp http
-  ⎿ 443/tcp https
-❯ /search
-✓ Found 5 programs (2.0s)
-────────────────────────────────────────
-❯ _
-────────────────────────────────────────
-  hunt │ 2 messages │ 54s    230 tokens
-  -- INSERT --               exit to quit
-```
-
-### Stage System
-
-During command execution, the `Stage` coordinates live components with the frame. Output appears ABOVE the frame while the frame stays pinned at the bottom.
+The repl handles input. The [`layout`](#layout) handles output zones. Together they build framed UIs like Claude Code:
 
 ```typescript
-// handlers receive stage as the third argument
-handler: async (args, signal, stage) => {
-  // stage.print() — write text above the frame
-  stage.print("Static results go here")
+import { repl, layout, statusbar, section, s, termWidth } from "@rlabs-inc/prism"
 
-  // stage.activity() — spinner above the frame
-  const act = stage.activity("Searching...", { timer: true })
-  // ... work ...
-  act.done("Found 5 results")
+const app = layout()
 
-  // stage.section() — multi-line block above the frame
-  const sec = stage.section("Scanning ports...", { spinner: "hack" })
-  sec.add("22/tcp ssh")
-  sec.add("80/tcp http")
-  sec.done("Scan complete")
-}
-```
-
-**How it works internally:**
-1. When a command starts, the Stage draws the frame at the bottom
-2. `stage.activity()` / `stage.section()` pass a `footer` config to the live component
-3. The live component renders its content, then renders the frame as a footer below it
-4. On every animation tick: erase content + footer, redraw both
-5. When `done()` is called: content freezes into scrollback, footer's `onEnd()` redraws the frame
-6. Next `stage.print()` or live component starts below the frozen content, above the frame
-
-**Without frame:** Stage methods just delegate to stdout. Handlers that don't use `stage` still work fine — they just don't get the "output above frame" coordination.
-
-### Full Example (demo-frame.ts)
-
-```typescript
-import { repl, statusbar, s, termWidth, type FrameConfig } from "@rlabs-inc/prism"
-
-let tokenCount = 0
-
-const frame: FrameConfig = {
-  above: [() => s.dim("─".repeat(termWidth()))],
-  below: [
-    () => s.dim("─".repeat(termWidth())),
-    () => statusbar({
+app.setActive(() => ({
+  lines: [
+    s.dim("─".repeat(termWidth())),
+    statusbar({
       left: [{ text: "hunt", color: s.cyan }],
       right: { text: `${tokenCount} tokens`, color: s.dim },
     }),
   ],
-}
+}))
 
 await repl({
   prompt: "❯ ",
-  frame,
   commands: {
     scan: {
       description: "Network scan",
-      handler: async (_args, signal, stage) => {
-        const sec = stage.section("Scanning...", { spinner: "hack", timer: true })
+      handler: async (_args, signal) => {
+        const sec = section("Scanning...", { spinner: "hack", timer: true })
         await new Promise(r => setTimeout(r, 600))
         sec.add("22/tcp ssh")
-        await new Promise(r => setTimeout(r, 400))
-        sec.add("443/tcp https")
-        sec.done("Scan complete: 2 open ports")
-        tokenCount += 150
+        sec.done("Scan complete")
       },
     },
   },
-  onInput: async (input, signal, stage) => {
-    stage.print(`You said: ${input}`)
-  },
+  onInput: async (input) => `You said: ${input}`,
+  onExit: () => app.close(),
 })
+```
+
+Terminal layout:
+```
+❯ /scan
+✓ Scan complete: 1 open port (0.6s)
+  ⎿  22/tcp ssh
+────────────────────────────────────────
+❯ _
+  hunt                       150 tokens
 ```
 
 ---
@@ -1668,15 +1596,159 @@ statusbar({
 })
 ```
 
-**Returns a string** (does not write to stdout). Use in frame config:
+**Returns a string** (does not write to stdout). Use in layout active zone:
 
 ```typescript
-const frame: FrameConfig = {
-  above: [],
-  below: [
-    () => statusbar({ left: [...], right: ... }),   // dynamic, called per render
+const app = layout()
+
+app.setActive(() => ({
+  lines: [
+    statusbar({ left: [...], right: ... }),   // dynamic, called per render
   ],
-}
+}))
+```
+
+---
+
+## layout
+
+Two-zone terminal manager. The **output zone** holds content that freezes to scrollback. The **active zone** stays pinned at the bottom, always alive, never freezes.
+
+```typescript
+import { layout, type Layout, type ActiveRender, type LayoutOptions } from "@rlabs-inc/prism"
+```
+
+### Basic Usage
+
+```typescript
+const app = layout()
+
+// set the active zone (pinned at bottom)
+app.setActive(() => ({
+  lines: [
+    s.dim("─".repeat(termWidth())),
+    statusbar({ left: [{ text: "hunt" }], right: "ready" }),
+  ],
+}))
+
+// write to output zone (freezes to scrollback, active zone redraws below)
+app.print("Some output text")
+
+// stream data (buffers, flushes complete lines)
+app.write("partial...")
+app.write("more data\n")  // flushes on newline
+
+// update active zone (re-renders with current render function)
+app.refresh()
+
+// done — erases active zone, writes closing message
+app.close("Session ended")
+```
+
+### Active Zone with Cursor
+
+The render function can return a cursor position for input fields:
+
+```typescript
+app.setActive(() => ({
+  lines: [
+    `❯ ${inputBuffer}`,
+    s.dim("─".repeat(termWidth())),
+  ],
+  cursor: [0, 2 + inputBuffer.length],  // [row, col] within the lines
+}))
+```
+
+### Live Components
+
+The layout coordinates live components (activity/section) so they render in the output zone while the active zone stays pinned below:
+
+```typescript
+// activity with active zone as footer
+const act = app.activity("Searching...", { timer: true })
+// output zone: ⠋ Searching... (1.2s)
+// active zone: ──────────── (stays pinned)
+act.done("Found 5 results")
+
+// section with active zone as footer
+const sec = app.section("Reading files...", { spinner: "dots" })
+sec.add("src/repl.ts")
+sec.add("src/layout.ts")
+sec.done("Read 2 files")
+
+// stream connected to layout
+const str = app.stream({ prefix: "  ", style: s.dim })
+str.write("chunk1...")
+str.write("chunk2\n")   // flushes "  chunk1...chunk2" through layout.print
+str.done()
+```
+
+### How It Works
+
+1. `setActive(render)` — stores the render function, draws the active zone
+2. `print(text)` — erases active zone, writes text to scrollback, redraws active zone
+3. `write(data)` — buffers data, flushes complete lines through `print`
+4. `activity()` / `section()` — creates live component with active zone as footer
+5. When live component ends, `footer.onEnd()` redraws the active zone
+6. `close()` — erases active zone, cleans up, fires `onClose`
+
+**Pipe-aware:** When not a TTY, the output zone works normally (direct stdout), the active zone is silent.
+
+---
+
+## stream
+
+Buffered streaming text with two modes: **standalone** (direct stdout with inline partial line preview) and **layout-aware** (flushes through `layout.print`).
+
+```typescript
+import { stream, type Stream, type StreamOptions } from "@rlabs-inc/prism"
+```
+
+### Standalone Mode
+
+```typescript
+const str = stream()
+
+str.write("Hello ")       // shows inline: "Hello " (partial, updated via CR)
+str.write("world\n")      // flushes "Hello world" as complete line
+str.write("next line\n")  // flushes immediately
+
+str.done("All done")      // flushes remaining buffer + final text
+// or
+str.fail("Something broke")  // flushes remaining buffer + red error text
+```
+
+### Layout-Aware Mode
+
+When connected to a layout, complete lines flush through `layout.print()` which coordinates with the active zone:
+
+```typescript
+const app = layout()
+app.setActive(() => ({ lines: ["status bar here"] }))
+
+const str = app.stream({ prefix: "  │ ", style: s.dim })
+str.write("first chunk ")
+str.write("second chunk\n")   // → layout.print("  │ first chunk second chunk")
+str.write("another line\n")   // → layout.print("  │ another line")
+str.done()
+```
+
+### Options
+
+```typescript
+const str = stream({
+  prefix: "  ",                    // prepended to each output line
+  style: (text) => s.dim(text),   // transform applied to each line
+})
+```
+
+### Updating Prefix
+
+```typescript
+const str = stream({ prefix: "downloading: " })
+str.write("chunk1\n")    // → "downloading: chunk1"
+str.text("uploading: ")  // change prefix mid-stream
+str.write("chunk2\n")    // → "uploading: chunk2"
 ```
 
 ---

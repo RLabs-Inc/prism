@@ -50,6 +50,8 @@ export interface ArgsConfig {
   argv?: string[]
   /** Don't auto-exit on --help/--version (return result instead) */
   noExit?: boolean
+  /** Allow running with no command (don't auto-show help when commands are defined but none given) */
+  allowNoCommand?: boolean
 }
 
 export interface ArgsResult {
@@ -269,8 +271,8 @@ export function args(config: ArgsConfig): ArgsResult {
     return result
   }
 
-  // No command given but commands are defined → show help
-  if (config.commands && !command && positionals.length === 0) {
+  // No command given but commands are defined → show help (unless allowNoCommand)
+  if (config.commands && !command && positionals.length === 0 && !config.allowNoCommand) {
     // Check if any flags besides help/version were passed
     const userFlags = Object.entries(flags).filter(([k, v]) => k !== "help" && k !== "version" && v !== undefined)
     if (userFlags.length === 0) {

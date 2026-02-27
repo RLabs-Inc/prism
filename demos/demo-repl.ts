@@ -18,7 +18,7 @@ await repl({
     clear: {
       description: "Clear the screen",
       aliases: ["cls"],
-      handler: () => console.write("\x1b[2J\x1b[H"),
+      handler: () => { console.write("\x1b[2J\x1b[H") },
     },
     scan: {
       description: "Simulate a scan",

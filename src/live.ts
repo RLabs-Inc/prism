@@ -133,6 +133,8 @@ export interface ActivityOptions {
   metrics?: () => string
   /** Footer rendered below this activity (e.g., repl frame) */
   footer?: FooterConfig
+  /** Override TTY detection (useful for testing) */
+  tty?: boolean
 }
 
 export interface Activity {
@@ -163,7 +165,10 @@ export function activity(text: string, options: ActivityOptions = {}): Activity 
     color: colorFn = s.cyan,
     metrics,
     footer: footerConfig,
+    tty: ttyOverride,
   } = options
+
+  const ttyMode = ttyOverride ?? isTTY
 
   // resolve icon to spinner frames or static string
   const isSpinnerName = typeof icon === "string" && icon in spinners
@@ -181,7 +186,7 @@ export function activity(text: string, options: ActivityOptions = {}): Activity 
   const t0 = Date.now()
 
   // non-TTY: static output
-  if (!isTTY) {
+  if (!ttyMode) {
     console.write(text + "\n")
     return {
       text(m) { console.write(m + "\n") },
@@ -272,6 +277,8 @@ export interface SectionOptions {
   collapseOnDone?: boolean
   /** Footer rendered below this section (e.g., repl frame) */
   footer?: FooterConfig
+  /** Override TTY detection (useful for testing) */
+  tty?: boolean
 }
 
 export interface Section {
@@ -309,10 +316,13 @@ export function section(title: string, options: SectionOptions = {}): Section {
     timer = false,
     collapseOnDone = false,
     footer: footerConfig,
+    tty: ttyOverride,
   } = options
 
+  const ttyMode = ttyOverride ?? isTTY
+
   // non-TTY: stream lines as they come
-  if (!isTTY) {
+  if (!ttyMode) {
     const pad = " ".repeat(indent)
     console.write(`${pad}${title}\n`)
     return {

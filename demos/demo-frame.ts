@@ -1,13 +1,13 @@
-// demo: Claude Code-style framed input with live components
+// demo: layout primitive with repl — two-zone terminal manager
 // run: bun demo-frame.ts
 //
-// shows: framed input (dividers + status bars), section(), activity()
-// the frame stays pinned at the bottom - command output appears above it
-// everything stays inline - no alternate screen, no heavy TUI
+// shows: layout() managing active zone (statusbar) + output zone (activity, section)
+// the active zone stays pinned at the bottom while output appears above it
+// everything stays inline — no alternate screen, no heavy TUI
 
 import {
-  repl, statusbar, s, log, md, highlight, termWidth,
-  type FrameConfig, type Stage,
+  repl, layout, statusbar, s, log, md, highlight, termWidth,
+  activity, section,
 } from "../src"
 
 // ── state ─────────────────────────────────────────────────
@@ -24,16 +24,15 @@ function elapsed(): string {
   return m > 0 ? `${m}m ${sec}s` : `${sec}s`
 }
 
-// ── frame layout ──────────────────────────────────────────
-// matches claude code: divider → input → divider → status → mode
+// ── layout setup ─────────────────────────────────────────
+// the layout manages two zones: output above, active zone below
 
-const frame: FrameConfig = {
-  above: [
-    () => s.dim("─".repeat(termWidth())),
-  ],
-  below: [
-    () => s.dim("─".repeat(termWidth())),
-    () => statusbar({
+const app = layout()
+
+app.setActive(() => ({
+  lines: [
+    s.dim("─".repeat(termWidth())),
+    statusbar({
       left: [
         { text: "hunt", color: s.cyan },
         { text: `${messageCount} messages` },
@@ -41,14 +40,14 @@ const frame: FrameConfig = {
       ],
       right: { text: `${tokenCount} tokens`, color: s.dim },
     }),
-    () => statusbar({
+    statusbar({
       left: [
         { text: `-- ${mode} --`, color: s.bold },
       ],
       right: { text: "exit to quit", color: s.dim },
     }),
   ],
-}
+}))
 
 // ── the app ───────────────────────────────────────────────
 
@@ -58,18 +57,17 @@ await repl({
 
   prompt: "❯ ",
   promptColor: s.cyan,
-  frame,
 
   commands: {
     clear: {
       description: "Clear the screen",
       aliases: ["cls"],
-      handler: (_args, _signal, _stage) => console.write("\x1b[2J\x1b[H"),
+      handler: () => { console.write("\x1b[2J\x1b[H") },
     },
     scan: {
       description: "Simulate a network scan with live section",
-      handler: async (_args, signal, stage) => {
-        const sec = stage.section("Scanning target...", { spinner: "hack", timer: true })
+      handler: async (_args, signal) => {
+        const sec = section("Scanning target...", { spinner: "hack", timer: true })
         await new Promise(r => setTimeout(r, 600))
         sec.add("22/tcp ssh")
         await new Promise(r => setTimeout(r, 400))
@@ -84,9 +82,9 @@ await repl({
     },
     search: {
       description: "Simulate searching with activity indicator",
-      handler: async (_args, signal, stage) => {
+      handler: async (_args, signal) => {
         let found = 0
-        const act = stage.activity("Searching programs...", {
+        const act = activity("Searching programs...", {
           icon: "dots",
           timer: true,
           metrics: () => `${found} found`,
@@ -102,8 +100,8 @@ await repl({
     },
     code: {
       description: "Show highlighted code sample",
-      handler: (_args, _signal, stage) => {
-        stage.print("\n" + highlight(`async function exploit(target: string) {
+      handler: () => {
+        console.write("\n" + highlight(`async function exploit(target: string) {
   const payload = "' OR 1=1 --"
   const res = await fetch(target, {
     method: "POST",
@@ -118,9 +116,9 @@ await repl({
     mode: {
       description: "Toggle mode (INSERT/NORMAL)",
       hidden: true,
-      handler: (_args, _signal, stage) => {
+      handler: () => {
         mode = mode === "INSERT" ? "NORMAL" : "INSERT"
-        stage.print(s.blue("ℹ") + ` Mode: ${mode}`)
+        console.write(s.blue("ℹ") + ` Mode: ${mode}\n`)
       },
     },
   },
@@ -130,10 +128,9 @@ await repl({
     return tools.filter(t => t.startsWith(word.toLowerCase()))
   },
 
-  onInput: async (input, signal, stage) => {
+  onInput: async (input, signal) => {
     messageCount++
-    // simulate processing
-    const sec = stage.section("Processing...", { spinner: "dots" })
+    const sec = section("Processing...", { spinner: "dots" })
     await new Promise(r => setTimeout(r, 600))
     if (signal.aborted) { sec.fail("Interrupted"); return }
     sec.done("Done")
@@ -142,6 +139,7 @@ await repl({
   },
 
   onExit: () => {
+    app.close()
     log.info("Session ended")
     log.info(`${messageCount} messages, ${tokenCount} tokens`)
   },
