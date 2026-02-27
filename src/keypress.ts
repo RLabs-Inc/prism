@@ -47,18 +47,21 @@ function parseKey(data: string): KeyEvent {
   const ctrl = data.length === 1 && data.charCodeAt(0) >= 1 && data.charCodeAt(0) <= 26
   const meta = data.length > 1 && data[0] === "\x1b" && data[1] !== "[" && data[1] !== "O"
 
-  let key = specialKeys[data] ?? ""
+  const special = specialKeys[data]
+  let key = ""
   let char = ""
 
-  if (ctrl) {
+  if (special) {
+    // named special key takes priority (enter, tab, backspace, arrows, etc.)
+    key = special
+  } else if (ctrl) {
     // ctrl+a = 0x01, ctrl+z = 0x1a
     key = String.fromCharCode(data.charCodeAt(0) + 96) // ctrl+a → "a"
-    char = ""
   } else if (meta) {
     // alt+<char>: \x1b followed by the character
     key = data[1]
     char = data[1]
-  } else if (!key) {
+  } else {
     // regular character
     key = data
     char = data

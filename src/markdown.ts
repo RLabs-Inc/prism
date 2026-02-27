@@ -18,7 +18,11 @@ export function md(text: string): string {
       codespan: (children) => children,
       link: (children) => children,
       hr: () => "---\n",
-      list: (children) => children,
+      list: (children, { ordered }) => {
+        if (!ordered) return children
+        let idx = 0
+        return children.replace(/^  - /gm, () => `  ${++idx}. `)
+      },
       listItem: (children) => `  - ${children}\n`,
       blockquote: (children) => `> ${children}`,
     })
@@ -41,8 +45,13 @@ export function md(text: string): string {
     codespan: (children) => s.cyan("`" + children + "`"),
     link: (children, { href }) => `${s.underline.blue(children)} ${s.dim(`(${href})`)}`,
     hr: () => divider("─") + "\n",
-    list: (children, { ordered }) => children,
-    listItem: (children, { checked }) => {
+    list: (children, { ordered }) => {
+      if (!ordered) return children
+      let idx = 0
+      return children.replace(/›/g, () => `${++idx}.`)
+    },
+    listItem: (children, meta) => {
+      const checked = meta?.checked
       if (checked === true) return `  ${s.green("✓")} ${children}\n`
       if (checked === false) return `  ${s.dim("○")} ${children}\n`
       return `  ${s.dim("›")} ${children}\n`

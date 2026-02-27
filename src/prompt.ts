@@ -4,7 +4,7 @@
 
 import { s } from "./style"
 import { isTTY } from "./writer"
-import { keypress, rawMode } from "./keypress"
+import { keypress, keypressStream } from "./keypress"
 
 const CR  = "\r"
 const CLR = "\x1b[2K"
@@ -215,48 +215,32 @@ export async function select(message: string, choices: string[], options: Select
   render()
 
   return new Promise<string>((resolve) => {
-    rawMode(true)
-    process.stdin.resume()
-    process.stdin.setEncoding("utf8")
-
-    const handler = (data: string) => {
-      if (data === "\x1b[A" || data === "k") {
-        // up
+    const stop = keypressStream((key) => {
+      if (key.key === "up" || key.key === "k") {
         selected = (selected - 1 + choices.length) % choices.length
         render()
-      } else if (data === "\x1b[B" || data === "j") {
-        // down
+      } else if (key.key === "down" || key.key === "j") {
         selected = (selected + 1) % choices.length
         render()
-      } else if (data === "\r" || data === "\n") {
-        // enter
-        process.stdin.removeListener("data", handler)
-        process.stdin.pause()
-        rawMode(false)
+      } else if (key.key === "enter") {
+        stop()
 
         // clear the menu and show result
         const visibleCount = Math.min(pageSize, choices.length)
         const totalLines = visibleCount + 1 + (choices.length > pageSize ? 1 : 0)
-        // move down to clear all lines
         for (let i = 0; i < totalLines; i++) {
           console.write(`${CLR}\n`)
         }
-        // move back up
         console.write(`\x1b[${totalLines}A`)
         console.write(`${CR}${CLR}${s.green("✓")} ${message} ${s.dim(choices[selected])}\n`)
         console.write(SHOW)
         resolve(choices[selected])
-      } else if (data === "\x03") {
-        // ctrl+c
-        process.stdin.removeListener("data", handler)
-        process.stdin.pause()
-        rawMode(false)
+      } else if (key.ctrl && key.key === "c") {
+        stop()
         console.write("\n" + SHOW)
         process.exit(130)
       }
-    }
-
-    process.stdin.on("data", handler)
+    })
   })
 }
 
@@ -311,25 +295,21 @@ export async function multiselect(message: string, choices: string[], options: M
   render()
 
   return new Promise<string[]>((resolve) => {
-    rawMode(true)
-    process.stdin.resume()
-    process.stdin.setEncoding("utf8")
-
-    const handler = (data: string) => {
-      if (data === "\x1b[A" || data === "k") {
+    const stop = keypressStream((key) => {
+      if (key.key === "up" || key.key === "k") {
         cursor = (cursor - 1 + choices.length) % choices.length
         render()
-      } else if (data === "\x1b[B" || data === "j") {
+      } else if (key.key === "down" || key.key === "j") {
         cursor = (cursor + 1) % choices.length
         render()
-      } else if (data === " ") {
+      } else if (key.key === "space") {
         if (selected.has(cursor)) {
           selected.delete(cursor)
         } else if (selected.size < max) {
           selected.add(cursor)
         }
         render()
-      } else if (data === "a") {
+      } else if (key.key === "a") {
         // toggle all
         if (selected.size === choices.length) {
           selected.clear()
@@ -337,14 +317,12 @@ export async function multiselect(message: string, choices: string[], options: M
           for (let i = 0; i < Math.min(choices.length, max); i++) selected.add(i)
         }
         render()
-      } else if (data === "\r" || data === "\n") {
+      } else if (key.key === "enter") {
         if (selected.size < min) {
           // flash error - need at least min
           return
         }
-        process.stdin.removeListener("data", handler)
-        process.stdin.pause()
-        rawMode(false)
+        stop()
 
         const visibleCount = Math.min(pageSize, choices.length)
         const totalLines = visibleCount + 1 + (choices.length > pageSize ? 1 : 0)
@@ -355,15 +333,11 @@ export async function multiselect(message: string, choices: string[], options: M
         console.write(`${CR}${CLR}${s.green("✓")} ${message} ${s.dim(result.join(", "))}\n`)
         console.write(SHOW)
         resolve(result)
-      } else if (data === "\x03") {
-        process.stdin.removeListener("data", handler)
-        process.stdin.pause()
-        rawMode(false)
+      } else if (key.ctrl && key.key === "c") {
+        stop()
         console.write("\n" + SHOW)
         process.exit(130)
       }
-    }
-
-    process.stdin.on("data", handler)
+    })
   })
 }

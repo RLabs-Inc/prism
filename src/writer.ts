@@ -2,7 +2,6 @@
 // detects TTY vs pipe and adapts automatically
 
 const isTTY = Bun.enableANSIColors
-const stdout = Bun.stdout.writer()
 
 /** Write raw text to stdout - no newline, no formatting */
 export function write(text: string): void {

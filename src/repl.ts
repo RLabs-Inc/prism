@@ -68,6 +68,8 @@ export interface Stage {
   activity(text: string, options?: ActivityOptions): Activity
   /** Create a multi-line section above the frame */
   section(title: string, options?: SectionOptions): Section
+  /** Clean up any remaining frame/state (called on exit, error, clear) */
+  cleanup(): void
 }
 
 export interface ReplOptions {
@@ -97,6 +99,8 @@ export interface ReplOptions {
   promptColor?: (text: string) => string
   /** Frame: wrap input with dividers and status bars */
   frame?: FrameConfig
+  /** Called when user types while onInput is running (concurrent steering message) */
+  onSteer?: (message: string, signal: AbortSignal) => void
 }
 
 // ── Internal ──────────────────────────────────────────────
@@ -105,6 +109,7 @@ type InputAction =
   | { action: "submit"; value: string }
   | { action: "cancel" }    // Ctrl+C on empty line
   | { action: "eof" }       // Ctrl+D on empty line
+  | { action: "abort" }     // externally aborted (e.g., agent finished during steering)
 
 // ── Render hooks ──────────────────────────────────────────
 // allow frame.ts to plug into readInput without modifying core logic
@@ -187,11 +192,8 @@ function createFrameHooks(frame: FrameConfig, promptColor: (t: string) => string
       // draw input (terminal wraps naturally at width)
       console.write(prompt + state.buffer + hintText)
 
-      // ensure we're past the input content
-      // (if content fills exact width, cursor is already at start of next line)
-      const atBoundary = cols > 0 && totalInputWidth > 0 && totalInputWidth % cols === 0
-      if (!atBoundary) console.write("\n")
-      else console.write("\n") // always newline - terminal may or may not have wrapped
+      // always newline after input — terminal may or may not have wrapped at boundary
+      console.write("\n")
 
       // draw below lines
       for (const fn of frame.below) {
@@ -259,6 +261,10 @@ class NoopStage implements Stage {
   section(title: string, options?: SectionOptions): Section {
     return createSection(title, options)
   }
+
+  cleanup() {
+    // no-op — nothing to clean up without a frame
+  }
 }
 
 /** Frame-aware stage - coordinates output above the persistent frame */
@@ -268,6 +274,11 @@ class FrameStage implements Stage {
   private promptColor: (t: string) => string
   private frameHeight: number
   private frameDrawn: boolean = false
+
+  // Steering support: when steerText is not null, the frame shows a steering prompt
+  private steerText: string | null = null
+  private steerCursorPos: number = 0
+  private cursorInSteer: boolean = false
 
   constructor(frame: FrameConfig, prompt: string, promptColor: (t: string) => string) {
     this.frameFns = frame
@@ -279,10 +290,32 @@ class FrameStage implements Stage {
     this.drawFrame()
   }
 
+  /** Set steering input state (text and cursor position) */
+  setSteer(text: string, cursor: number) {
+    this.steerText = text
+    this.steerCursorPos = cursor
+  }
+
+  /** Clear steering state */
+  clearSteer() {
+    this.steerText = null
+    this.steerCursorPos = 0
+    this.cursorInSteer = false
+  }
+
+  /** Erase and redraw the frame in place */
+  refresh() {
+    this.eraseFrame()
+    this.drawFrame()
+  }
+
   private renderFrameLines(): string[] {
+    const promptLine = this.steerText !== null
+      ? s.dim(">> ") + this.steerText
+      : this.promptColor(this.promptStr)
     return [
       ...this.frameFns.above.map(fn => fn()),
-      this.promptColor(this.promptStr),
+      promptLine,
       ...this.frameFns.below.map(fn => fn()),
     ]
   }
@@ -295,12 +328,31 @@ class FrameStage implements Stage {
     // move cursor back to top of frame (invariant: cursor at frame start)
     if (lines.length > 0) console.write(`\x1b[${lines.length}A`)
     this.frameDrawn = true
+    this.cursorInSteer = false
+
+    // Position cursor in steering input if active
+    if (this.steerText !== null) {
+      const aboveCount = this.frameFns.above.length
+      if (aboveCount > 0) console.write(`\x1b[${aboveCount}B`)
+      const steerPromptWidth = 3 // ">> " visual width
+      const cursorDisplay = this.steerText.slice(0, this.steerCursorPos)
+      const col = steerPromptWidth + Bun.stringWidth(cursorDisplay)
+      console.write("\r")
+      if (col > 0) console.write(`\x1b[${col}C`)
+      this.cursorInSteer = true
+    }
   }
 
   private eraseFrame() {
     if (!this.frameDrawn) return
+    // If cursor was positioned in steer line, move back to frame start
+    if (this.cursorInSteer) {
+      const aboveCount = this.frameFns.above.length
+      if (aboveCount > 0) console.write(`\x1b[${aboveCount}A`)
+    }
     console.write("\r\x1b[J")
     this.frameDrawn = false
+    this.cursorInSteer = false
   }
 
   private createFooter(): FooterConfig {
@@ -336,8 +388,7 @@ class FrameStage implements Stage {
     })
   }
 
-  /** Erase any remaining frame on cleanup */
-  _cleanup() {
+  cleanup() {
     this.eraseFrame()
   }
 }
@@ -356,6 +407,8 @@ interface InputConfig {
   clearOnCancel: boolean
   /** Optional render hooks for frame support */
   hooks?: RenderHooks
+  /** External abort signal — resolves with { action: "abort" } when fired */
+  abort?: AbortSignal
 }
 
 async function readInput(config: InputConfig): Promise<InputAction> {
@@ -538,6 +591,8 @@ async function readInput(config: InputConfig): Promise<InputAction> {
 
   // --- read loop ---
   return new Promise<InputAction>((resolve) => {
+    let resolved = false
+
     process.stdin.setRawMode(true)
     process.stdin.resume()
     process.stdin.setEncoding("utf8")
@@ -546,6 +601,13 @@ async function readInput(config: InputConfig): Promise<InputAction> {
       process.stdin.removeListener("data", handler)
       process.stdin.pause()
       process.stdin.setRawMode(false)
+    }
+
+    function done(result: InputAction) {
+      if (resolved) return
+      resolved = true
+      cleanup()
+      resolve(result)
     }
 
     function handler(data: string) {
@@ -558,8 +620,7 @@ async function readInput(config: InputConfig): Promise<InputAction> {
         } else {
           exitContent()
         }
-        cleanup()
-        resolve({ action: "submit", value: buffer })
+        done({ action: "submit", value: buffer })
         return
       }
 
@@ -582,8 +643,7 @@ async function readInput(config: InputConfig): Promise<InputAction> {
         } else {
           exitContent()
         }
-        cleanup()
-        resolve({ action: "cancel" })
+        done({ action: "cancel" })
         return
       }
 
@@ -595,8 +655,7 @@ async function readInput(config: InputConfig): Promise<InputAction> {
           } else {
             console.write("\n")
           }
-          cleanup()
-          resolve({ action: "eof" })
+          done({ action: "eof" })
           return
         }
         // forward delete when buffer has content
@@ -677,6 +736,17 @@ async function readInput(config: InputConfig): Promise<InputAction> {
     }
 
     process.stdin.on("data", handler)
+
+    // External abort support
+    if (config.abort) {
+      if (config.abort.aborted) {
+        done({ action: "abort" })
+        return
+      }
+      config.abort.addEventListener("abort", () => {
+        done({ action: "abort" })
+      }, { once: true })
+    }
   })
 }
 
@@ -751,6 +821,7 @@ export async function repl(options: ReplOptions): Promise<void> {
     onExit,
     promptColor = s.cyan,
     frame,
+    onSteer,
   } = options
 
   // shared history array
@@ -920,71 +991,229 @@ export async function repl(options: ReplOptions): Promise<void> {
           await cmd.def.handler(cmdArgs, controller.signal, stage)
         } catch (err) {
           if ((err as Error)?.name !== "AbortError") {
-            if (stage instanceof FrameStage) {
-              stage.print(`${s.red("✗")} ${(err as Error)?.message ?? err}`)
-            } else {
-              console.write(`${s.red("✗")} ${(err as Error)?.message ?? err}\n`)
-            }
+            stage.print(`${s.red("✗")} ${(err as Error)?.message ?? err}`)
           }
         } finally {
           process.removeListener("SIGINT", onSigInt)
         }
 
-        // cleanup stage (erase any remaining frame)
-        if (stage instanceof FrameStage) (stage as FrameStage)._cleanup()
+        stage.cleanup()
         continue
       }
 
       // unknown command
-      if (stage instanceof FrameStage) {
-        stage.print(`${s.red("✗")} Unknown command: ${s.bold(commandPrefix + cmdName)}`)
-        if (commandMap.size > 0) {
-          stage.print(s.dim(`  Type ${commandPrefix}help for available commands.`))
-        }
-        ;(stage as FrameStage)._cleanup()
-      } else {
-        console.write(`${s.red("✗")} Unknown command: ${s.bold(commandPrefix + cmdName)}\n`)
-        if (commandMap.size > 0) {
-          console.write(s.dim(`  Type ${commandPrefix}help for available commands.`) + "\n")
-        }
+      stage.print(`${s.red("✗")} Unknown command: ${s.bold(commandPrefix + cmdName)}`)
+      if (commandMap.size > 0) {
+        stage.print(s.dim(`  Type ${commandPrefix}help for available commands.`))
       }
+      stage.cleanup()
       continue
     }
 
     // ── regular input: call handler with abort support ─
     const controller = new AbortController()
     let forceExit = false
-    const onSigInt = () => {
-      if (forceExit) { console.write("\n"); process.exit(130) }
-      controller.abort()
-      forceExit = true
-      console.write(s.dim("\n(interrupted - Ctrl+C again to force exit)") + "\n")
-    }
-    process.on("SIGINT", onSigInt)
 
-    try {
-      const output = await onInput(input, controller.signal, stage)
-      if (typeof output === "string" && output) {
-        if (stage instanceof FrameStage) {
+    if (onSteer && frame && stage instanceof FrameStage) {
+      // ── steering mode: accept input while handler runs ──
+      const stageFs = stage
+
+      const handlerPromise = (async () => {
+        try {
+          const output = await onInput(input, controller.signal, stage)
+          if (typeof output === "string" && output) {
+            stage.print(output)
+          }
+        } catch (err) {
+          if ((err as Error)?.name !== "AbortError") {
+            stage.print(`${s.red("✗")} ${(err as Error)?.message ?? err}`)
+          }
+        }
+      })()
+
+      // Steering input loop via raw stdin
+      let steerBuffer = ""
+      let steerCursor = 0
+      let handlerDone = false
+
+      stageFs.setSteer(steerBuffer, steerCursor)
+      stageFs.refresh()
+
+      await new Promise<void>((steerResolve) => {
+        let steerResolved = false
+
+        function steerDone() {
+          if (steerResolved) return
+          steerResolved = true
+          process.stdin.removeListener("data", steerHandler)
+          process.stdin.pause()
+          process.stdin.setRawMode(false)
+          stageFs.clearSteer()
+          steerResolve()
+        }
+
+        function updateDisplay() {
+          stageFs.setSteer(steerBuffer, steerCursor)
+          stageFs.refresh()
+        }
+
+        function steerHandler(data: string) {
+          if (handlerDone) { steerDone(); return }
+
+          // Enter: send steering message
+          if (data === "\r" || data === "\n") {
+            if (steerBuffer.trim()) {
+              const msg = steerBuffer.trim()
+              steerBuffer = ""
+              steerCursor = 0
+              stageFs.setSteer(steerBuffer, steerCursor)
+              stageFs.print(s.dim(`  >> ${msg}`))
+              onSteer(msg, controller.signal)
+            }
+            return
+          }
+
+          // Ctrl+C: clear buffer or abort agent
+          if (data === "\x03") {
+            if (steerBuffer.length > 0) {
+              steerBuffer = ""
+              steerCursor = 0
+              updateDisplay()
+              return
+            }
+            if (forceExit) {
+              steerDone()
+              console.write("\n")
+              process.exit(130)
+            }
+            controller.abort()
+            forceExit = true
+            steerBuffer = ""
+            steerCursor = 0
+            stageFs.setSteer(steerBuffer, steerCursor)
+            stageFs.print(s.dim("  (interrupted - Ctrl+C again to force exit)"))
+            return
+          }
+
+          // Ctrl+D on empty: ignore in steering
+          if (data === "\x04" && steerBuffer.length === 0) return
+
+          // Backspace
+          if (data === "\x7f") {
+            if (steerCursor > 0) {
+              steerBuffer = steerBuffer.slice(0, steerCursor - 1) + steerBuffer.slice(steerCursor)
+              steerCursor--
+              updateDisplay()
+            }
+            return
+          }
+
+          // Delete / Ctrl+D with content
+          if (data === "\x1b[3~" || (data === "\x04" && steerCursor < steerBuffer.length)) {
+            if (steerCursor < steerBuffer.length) {
+              steerBuffer = steerBuffer.slice(0, steerCursor) + steerBuffer.slice(steerCursor + 1)
+              updateDisplay()
+            }
+            return
+          }
+
+          // Arrow Right
+          if (data === "\x1b[C") {
+            if (steerCursor < steerBuffer.length) { steerCursor++; updateDisplay() }
+            return
+          }
+
+          // Arrow Left
+          if (data === "\x1b[D") {
+            if (steerCursor > 0) { steerCursor--; updateDisplay() }
+            return
+          }
+
+          // Home / Ctrl+A
+          if (data === "\x01" || data === "\x1b[H") {
+            steerCursor = 0; updateDisplay(); return
+          }
+
+          // End / Ctrl+E
+          if (data === "\x05" || data === "\x1b[F") {
+            steerCursor = steerBuffer.length; updateDisplay(); return
+          }
+
+          // Ctrl+U: clear before cursor
+          if (data === "\x15") {
+            steerBuffer = steerBuffer.slice(steerCursor)
+            steerCursor = 0
+            updateDisplay()
+            return
+          }
+
+          // Ctrl+K: clear after cursor
+          if (data === "\x0b") {
+            steerBuffer = steerBuffer.slice(0, steerCursor)
+            updateDisplay()
+            return
+          }
+
+          // Ctrl+W: delete word back
+          if (data === "\x17") {
+            const start = steerCursor
+            while (steerCursor > 0 && steerBuffer[steerCursor - 1] === " ") steerCursor--
+            while (steerCursor > 0 && steerBuffer[steerCursor - 1] !== " ") steerCursor--
+            steerBuffer = steerBuffer.slice(0, steerCursor) + steerBuffer.slice(start)
+            updateDisplay()
+            return
+          }
+
+          // Regular characters / paste
+          if (!data.startsWith("\x1b") && data.charCodeAt(0) >= 32) {
+            const clean = data.replace(/\r?\n/g, " ")
+            steerBuffer = steerBuffer.slice(0, steerCursor) + clean + steerBuffer.slice(steerCursor)
+            steerCursor += clean.length
+            updateDisplay()
+            return
+          }
+
+          // Unhandled escape sequences: ignore
+        }
+
+        process.stdin.setRawMode(true)
+        process.stdin.resume()
+        process.stdin.setEncoding("utf8")
+        process.stdin.on("data", steerHandler)
+
+        handlerPromise.finally(() => {
+          handlerDone = true
+          steerDone()
+        })
+      })
+
+      await handlerPromise
+
+    } else {
+      // ── no steering: original behavior ──
+      const onSigInt = () => {
+        if (forceExit) { console.write("\n"); process.exit(130) }
+        controller.abort()
+        forceExit = true
+        console.write(s.dim("\n(interrupted - Ctrl+C again to force exit)") + "\n")
+      }
+      process.on("SIGINT", onSigInt)
+
+      try {
+        const output = await onInput(input, controller.signal, stage)
+        if (typeof output === "string" && output) {
           stage.print(output)
-        } else {
-          console.write(output + "\n")
         }
-      }
-    } catch (err) {
-      if ((err as Error)?.name !== "AbortError") {
-        if (stage instanceof FrameStage) {
+      } catch (err) {
+        if ((err as Error)?.name !== "AbortError") {
           stage.print(`${s.red("✗")} ${(err as Error)?.message ?? err}`)
-        } else {
-          console.write(`${s.red("✗")} ${(err as Error)?.message ?? err}\n`)
         }
+      } finally {
+        process.removeListener("SIGINT", onSigInt)
       }
-    } finally {
-      process.removeListener("SIGINT", onSigInt)
     }
 
-    // cleanup stage
-    if (stage instanceof FrameStage) (stage as FrameStage)._cleanup()
+    stage.cleanup()
   }
 
   onExit?.()

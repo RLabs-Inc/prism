@@ -197,7 +197,6 @@ export function activity(text: string, options: ActivityOptions = {}): Activity 
 
   // use block renderer when we have a footer (need multi-line management)
   const block = footerConfig ? createBlock(footerConfig) : null
-  let hasRendered = false
 
   function buildLine(): string {
     const frame = colorFn(frames[idx % frames.length])

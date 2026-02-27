@@ -54,7 +54,7 @@ bun demo           # original demo
 ## Quick Start
 
 ```typescript
-import { s, writeln, box, spinner, log, badge } from "prism/src"
+import { s, writeln, box, spinner, log, badge } from "@rlabs-inc/prism"
 
 // styled output
 writeln(s.bold.green("mission ready"))
@@ -82,7 +82,7 @@ spin.done(`Synced ${data.length} programs`)
 Pipe-aware output primitives. The foundation everything else builds on.
 
 ```typescript
-import { write, writeln, error, pipeAware, termWidth, isTTY } from "prism/src"
+import { write, writeln, error, pipeAware, termWidth, isTTY } from "@rlabs-inc/prism"
 ```
 
 ### Functions
@@ -115,7 +115,7 @@ if (isTTY) { /* animate */ } else { /* static */ }
 Composable terminal styling via Proxy chains. Two color modes: terminal-themed (ANSI 16) and exact RGB.
 
 ```typescript
-import { s, color, RESET } from "prism/src"
+import { s, color, RESET } from "@rlabs-inc/prism"
 ```
 
 ### Modifiers
@@ -205,7 +205,7 @@ color("text", "white", "#8b5cf6")      // fg + bg
 Framed content sections with Unicode box-drawing characters.
 
 ```typescript
-import { box, divider, header, borders, type BorderStyle } from "prism/src"
+import { box, divider, header, borders, type BorderStyle } from "@rlabs-inc/prism"
 ```
 
 ### Box
@@ -273,7 +273,7 @@ writeln(header("RESULTS", { char: "━", color: s.bold.green }))
 Data tables with per-cell colors, alignment, truncation, and formatting.
 
 ```typescript
-import { table } from "prism/src"
+import { table } from "@rlabs-inc/prism"
 ```
 
 ### Basic Usage
@@ -334,7 +334,7 @@ writeln(table(data, {
 Auto-sizing multi-column layout. Fits as many columns as the terminal allows.
 
 ```typescript
-import { columns } from "prism/src"
+import { columns } from "@rlabs-inc/prism"
 ```
 
 ```typescript
@@ -367,7 +367,7 @@ Output (auto-sized to terminal width):
 Render markdown to styled terminal output using `Bun.markdown.render()` with hacker-themed ANSI callbacks.
 
 ```typescript
-import { md } from "prism/src"
+import { md } from "@rlabs-inc/prism"
 ```
 
 ```typescript
@@ -408,7 +408,7 @@ Renders with:
 45 animated inline loaders across 12 categories. Animates on the current line, then completes with an icon and final message that stays in terminal history.
 
 ```typescript
-import { spinner, spinners, type SpinnerStyle } from "prism/src"
+import { spinner, spinners, type SpinnerStyle } from "@rlabs-inc/prism"
 ```
 
 ### Basic Usage
@@ -505,7 +505,7 @@ bun run demo-spinner.ts dots            # preview a specific style for 3s
 Determinate progress bars with 10 visual styles, smooth sub-character rendering, and ETA calculation.
 
 ```typescript
-import { progress, barStyles, type ProgressStyle } from "prism/src"
+import { progress, barStyles, type ProgressStyle } from "@rlabs-inc/prism"
 ```
 
 ### Basic Usage
@@ -571,7 +571,7 @@ When `smooth: true` (default for bar/blocks/shades styles), the progress bar use
 Inline status indicators. Three variants for different contexts.
 
 ```typescript
-import { badge } from "prism/src"
+import { badge } from "@rlabs-inc/prism"
 ```
 
 ### Bracket (default)
@@ -611,7 +611,7 @@ badge("BC", { color: s.bgBlue, variant: "pill" })      //  BC  (blue bg)
 Formatted lists, key-value pairs, and file trees.
 
 ```typescript
-import { list, kv, tree } from "prism/src"
+import { list, kv, tree } from "@rlabs-inc/prism"
 ```
 
 ### List
@@ -738,7 +738,7 @@ writeln(tree(data, {
 Structured logging with consistent icons and colors. Same visual language across all prism-based tools.
 
 ```typescript
-import { log } from "prism/src"
+import { log } from "@rlabs-inc/prism"
 ```
 
 ### Log Levels
@@ -785,7 +785,7 @@ log.configure({})
 Text manipulation utilities. All ANSI-aware — they handle escape codes correctly.
 
 ```typescript
-import { truncate, indent, pad, link, wrap } from "prism/src"
+import { truncate, indent, pad, link, wrap } from "@rlabs-inc/prism"
 ```
 
 ### truncate
@@ -861,7 +861,7 @@ wrap("Auto-width wrapping")                           // wraps to terminal width
 Raw keyboard input reading. Foundation for all interactive components.
 
 ```typescript
-import { keypress, keypressStream, rawMode, type KeyEvent } from "prism/src"
+import { keypress, keypressStream, rawMode, type KeyEvent } from "@rlabs-inc/prism"
 ```
 
 ### Single Keypress
@@ -897,7 +897,7 @@ All standard keys including arrows, home/end, page up/down, insert, delete, F1-F
 Interactive terminal input primitives. Built on `keypress` for raw keyboard handling.
 
 ```typescript
-import { confirm, input, password, select, multiselect } from "prism/src"
+import { confirm, input, password, select, multiselect } from "@rlabs-inc/prism"
 ```
 
 ### Confirm (y/n)
@@ -991,7 +991,7 @@ const platforms = await multiselect("Sync platforms:", [
 Large block-letter text using a 5x5 pixel bitmap font. Supports A-Z, 0-9, and common symbols.
 
 ```typescript
-import { banner } from "prism/src"
+import { banner } from "@rlabs-inc/prism"
 ```
 
 ### Basic Usage
@@ -1037,7 +1037,7 @@ writeln(banner("HUNT", {
 Stopwatch, countdown, and benchmarking utilities.
 
 ```typescript
-import { stopwatch, countdown, bench, formatTime } from "prism/src"
+import { stopwatch, countdown, bench, formatTime } from "@rlabs-inc/prism"
 ```
 
 ### Stopwatch
@@ -1095,7 +1095,7 @@ formatTime(3700000)     // "1h 1m"
 Keyword-based syntax highlighting for terminal output. Not a full parser — just enough to make code snippets readable in CLI output.
 
 ```typescript
-import { highlight } from "prism/src"
+import { highlight } from "@rlabs-inc/prism"
 ```
 
 ### Basic Usage
@@ -1154,7 +1154,7 @@ Output:
 Declarative CLI argument parsing.
 
 ```typescript
-import { args } from "prism/src"
+import { args } from "@rlabs-inc/prism"
 ```
 
 ### Basic Usage
@@ -1304,7 +1304,7 @@ args({
 A full interactive prompt system with line editing, history, tab completion, frame support, and a Stage system that coordinates animated output with the frame.
 
 ```typescript
-import { readline, repl, type ReadlineOptions, type ReplOptions, type FrameConfig, type Stage } from "prism/src"
+import { readline, repl, type ReadlineOptions, type ReplOptions, type FrameConfig, type Stage } from "@rlabs-inc/prism"
 ```
 
 ### readline
@@ -1395,7 +1395,7 @@ await repl({
 Wrap the input with dividers and status bars. The frame **erases** on submit (never freezes into scrollback). Only command output appears in terminal history.
 
 ```typescript
-import { statusbar, termWidth } from "prism/src"
+import { statusbar, termWidth } from "@rlabs-inc/prism"
 
 const frame: FrameConfig = {
   above: [
@@ -1487,7 +1487,7 @@ handler: async (args, signal, stage) => {
 ### Full Example (demo-frame.ts)
 
 ```typescript
-import { repl, statusbar, s, termWidth, type FrameConfig } from "prism/src"
+import { repl, statusbar, s, termWidth, type FrameConfig } from "@rlabs-inc/prism"
 
 let tokenCount = 0
 
@@ -1532,7 +1532,7 @@ await repl({
 Live terminal components that animate in-place, then freeze into scrollback. Two types: single-line `activity()` and multi-line `section()`.
 
 ```typescript
-import { activity, section, type Activity, type Section, type FooterConfig } from "prism/src"
+import { activity, section, type Activity, type Section, type FooterConfig } from "@rlabs-inc/prism"
 ```
 
 ### activity
@@ -1634,7 +1634,7 @@ Both `activity` and `section` are **pipe-aware**: when not a TTY, they emit stat
 Left/right aligned terminal status line. A single line with left segments joined by separator and right-aligned text, space-filled between sides.
 
 ```typescript
-import { statusbar } from "prism/src"
+import { statusbar } from "@rlabs-inc/prism"
 ```
 
 ### Basic Usage
@@ -1754,15 +1754,15 @@ prism/
 
 ```typescript
 // grab everything
-import * as prism from "prism/src"
+import * as prism from "@rlabs-inc/prism"
 
 // cherry-pick what you need
-import { s, writeln, box, spinner, log } from "prism/src"
+import { s, writeln, box, spinner, log } from "@rlabs-inc/prism"
 
 // individual modules (for tree-shaking or clarity)
-import { s } from "prism/src/style"
-import { spinner } from "prism/src/spinner"
-import { log } from "prism/src/log"
+import { s } from "@rlabs-inc/prism/style"
+import { spinner } from "@rlabs-inc/prism/spinner"
+import { log } from "@rlabs-inc/prism/log"
 ```
 
 ---
