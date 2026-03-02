@@ -300,3 +300,79 @@ describe("multiselect (non-TTY)", () => {
     expect(Array.isArray(result)).toBe(true)
   })
 })
+
+// =============================================================================
+// C6: input() cursor functionality
+// =============================================================================
+
+describe("input cursor handling", () => {
+  test("input() source has left/right arrow key handling", async () => {
+    const source = await Bun.file(import.meta.dir + "/../src/prompt.ts").text()
+    expect(source).toContain('key.key === "left"')
+    expect(source).toContain('key.key === "right"')
+  })
+
+  test("input() backspace is cursor-aware (not just slice from end)", async () => {
+    const source = await Bun.file(import.meta.dir + "/../src/prompt.ts").text()
+    // Should use cursor-aware backspace: value.slice(0, cursor - 1) + value.slice(cursor)
+    expect(source).toContain("value.slice(0, cursor - 1) + value.slice(cursor)")
+  })
+
+  test("input() cursor movement is bounded", async () => {
+    const source = await Bun.file(import.meta.dir + "/../src/prompt.ts").text()
+    // Left: cursor > 0, Right: cursor < value.length
+    expect(source).toContain("cursor > 0")
+    expect(source).toContain("cursor < value.length")
+  })
+})
+
+// =============================================================================
+// A4: AbortSignal support — graceful cancellation
+// =============================================================================
+
+describe("AbortSignal support", () => {
+  test("confirm accepts signal option without error", async () => {
+    const controller = new AbortController()
+    // Non-TTY returns default immediately — signal is accepted but not triggered
+    const result = await confirm("Test?", { default: true, signal: controller.signal })
+    expect(result).toBe(true)
+  })
+
+  test("input accepts signal option without error", async () => {
+    const controller = new AbortController()
+    const result = await input("Name:", { default: "test", signal: controller.signal })
+    expect(result).toBe("test")
+  })
+
+  test("password accepts signal option without error", async () => {
+    const controller = new AbortController()
+    const result = await password("Pass:", { signal: controller.signal })
+    expect(result).toBe("")
+  })
+
+  test("select accepts signal option without error", async () => {
+    const controller = new AbortController()
+    const result = await select("Pick:", ["a", "b"], { signal: controller.signal })
+    expect(result).toBe("a")
+  })
+
+  test("multiselect accepts signal option without error", async () => {
+    const controller = new AbortController()
+    const result = await multiselect("Pick:", ["a", "b"], { signal: controller.signal })
+    expect(result).toEqual([])
+  })
+
+  test("backwards compat — no signal option still works", async () => {
+    // All functions should work without signal (existing behavior)
+    const c = await confirm("Test?")
+    const i = await input("Name:")
+    const p = await password("Pass:")
+    const s = await select("Pick:", ["a"])
+    const m = await multiselect("Pick:", ["a"])
+    expect(typeof c).toBe("boolean")
+    expect(typeof i).toBe("string")
+    expect(typeof p).toBe("string")
+    expect(typeof s).toBe("string")
+    expect(Array.isArray(m)).toBe(true)
+  })
+})

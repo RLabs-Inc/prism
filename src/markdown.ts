@@ -5,6 +5,12 @@ import { s } from "./style"
 import { isTTY } from "./writer"
 import { divider } from "./box"
 
+// Internal sentinel for list items — private-use Unicode char that won't
+// appear in rendered nested lists. The list handler replaces these with
+// numbered markers (ordered) or bullet markers (unordered).
+const ITEM_SENTINEL = "\uE000"
+const SENTINEL_RE = new RegExp(ITEM_SENTINEL, "g")
+
 /** Render markdown to styled terminal output */
 export function md(text: string): string {
   if (!isTTY) {
@@ -19,11 +25,13 @@ export function md(text: string): string {
       link: (children) => children,
       hr: () => "---\n",
       list: (children, { ordered }) => {
-        if (!ordered) return children
-        let idx = 0
-        return children.replace(/^  - /gm, () => `  ${++idx}. `)
+        if (ordered) {
+          let idx = 0
+          return children.replace(SENTINEL_RE, () => `${++idx}.`)
+        }
+        return children.replace(SENTINEL_RE, "-")
       },
-      listItem: (children) => `  - ${children}\n`,
+      listItem: (children) => `  ${ITEM_SENTINEL} ${children}\n`,
       blockquote: (children) => `> ${children}`,
     })
   }
@@ -46,15 +54,18 @@ export function md(text: string): string {
     link: (children, { href }) => `${s.underline.blue(children)} ${s.dim(`(${href})`)}`,
     hr: () => divider("─") + "\n",
     list: (children, { ordered }) => {
-      if (!ordered) return children
-      let idx = 0
-      return children.replace(/›/g, () => `${++idx}.`)
+      if (ordered) {
+        let idx = 0
+        return children.replace(SENTINEL_RE, () => `${++idx}.`)
+      }
+      // unordered: replace sentinel with styled bullet
+      return children.replace(SENTINEL_RE, s.dim("›"))
     },
     listItem: (children, meta) => {
       const checked = meta?.checked
       if (checked === true) return `  ${s.green("✓")} ${children}\n`
       if (checked === false) return `  ${s.dim("○")} ${children}\n`
-      return `  ${s.dim("›")} ${children}\n`
+      return `  ${ITEM_SENTINEL} ${children}\n`
     },
     blockquote: (children) => s.dim("│ ") + s.italic(children),
     strikethrough: (children) => s.strikethrough.dim(children),

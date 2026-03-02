@@ -8,6 +8,10 @@
 import { isTTY } from "./writer"
 import type { Layout } from "./layout"
 
+// ANSI red styling for fail() — applied based on stream's own ttyMode
+const RED_OPEN = "\x1b[31m"
+const RED_CLOSE = "\x1b[39m"
+
 // ── Types ─────────────────────────────────────
 
 /** Options for stream creation */
@@ -154,7 +158,9 @@ export function stream(options?: StreamOptions): Stream {
       closed = true
       flushBuffer()
       if (errorText) {
-        const red = `\x1b[31m${errorText}\x1b[0m`
+        // Apply red styling when in TTY mode or layout mode (layout manages its own TTY)
+        const shouldStyle = ttyMode || !!ly
+        const red = shouldStyle ? `${RED_OPEN}${errorText}${RED_CLOSE}` : errorText
         if (ly) ly.print(red)
         else console.write(red + "\n")
       }

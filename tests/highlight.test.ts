@@ -398,4 +398,85 @@ describe("highlight", () => {
       expect(stripped).toContain("SELECT")
     })
   })
+
+  // B5: multi-line template literal state tracking
+  describe("multi-line template literals", () => {
+    if (hasColor) {
+      test("multi-line template literal has green on all lines", () => {
+        const code = "const x = `line1\nline2\nline3`"
+        const output = highlight(code, { language: "typescript" })
+        const lines = output.split("\n")
+        // All three lines should have green (string) coloring
+        expect(lines[0]).toContain(GREEN) // opening backtick line
+        expect(lines[1]).toContain(GREEN) // middle line
+        expect(lines[2]).toContain(GREEN) // closing backtick line
+      })
+
+      test("code after closing backtick is not green", () => {
+        const code = "const x = `hello\nworld`\nconst y = 5"
+        const output = highlight(code, { language: "typescript" })
+        const lines = output.split("\n")
+        // Line 3 should NOT be green — it's regular code
+        // "const" should be magenta (keyword), "5" should be yellow (number)
+        expect(lines[2]).toContain(MAGENTA) // "const" keyword
+        expect(lines[2]).toContain(YELLOW)  // "5" number
+      })
+
+      test("single-line strings still work with state tracking", () => {
+        const code = 'const a = "hello"\nconst b = \'world\'\nconst c = `single`'
+        const output = highlight(code, { language: "typescript" })
+        const lines = output.split("\n")
+        // Each line should have green for its string
+        for (const line of lines) {
+          expect(line).toContain(GREEN)
+          expect(line).toContain(MAGENTA) // "const" keyword
+        }
+      })
+
+      test("nested quotes inside template literal are all green", () => {
+        const code = 'const x = `say "hello" and \'bye\'`'
+        const output = highlight(code, { language: "typescript" })
+        // The entire template literal (including nested quotes) should be green
+        expect(output).toContain(GREEN)
+        const stripped = strip(output)
+        expect(stripped).toContain("say")
+        expect(stripped).toContain("hello")
+        expect(stripped).toContain("bye")
+      })
+
+      test("escaped backtick inside template literal does not close string", () => {
+        const code = "const x = `escaped \\` here`"
+        const output = highlight(code, { language: "typescript" })
+        // Should still have green for the string portion
+        expect(output).toContain(GREEN)
+      })
+
+      test("template literal spanning 4+ lines colors all lines green", () => {
+        const code = "const sql = `\nSELECT *\nFROM users\nWHERE active\n`"
+        const output = highlight(code, { language: "typescript" })
+        const lines = output.split("\n")
+        // Lines 1-4 (inside the template literal) should all be green
+        for (let i = 1; i <= 3; i++) {
+          expect(lines[i]).toContain(GREEN)
+        }
+      })
+
+      test("multiple template literals in sequence", () => {
+        const code = "const a = `first`\nconst b = `second`"
+        const output = highlight(code, { language: "typescript" })
+        const lines = output.split("\n")
+        // Both lines have green strings and magenta keywords
+        expect(lines[0]).toContain(GREEN)
+        expect(lines[0]).toContain(MAGENTA)
+        expect(lines[1]).toContain(GREEN)
+        expect(lines[1]).toContain(MAGENTA)
+      })
+    } else {
+      test("non-TTY: multi-line template literal passes through unmodified", () => {
+        const code = "const x = `line1\nline2\nline3`"
+        const output = highlight(code, { language: "typescript" })
+        expect(output).toBe(code)
+      })
+    }
+  })
 })

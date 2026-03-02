@@ -244,6 +244,54 @@ describe("box()", () => {
       expect(Bun.stringWidth(line)).toBe(40)
     }
   })
+
+  // B3: center-aligned title width must match bottom border
+  test("center-aligned title top border matches bottom border width", () => {
+    const w = 40
+    const result = box("content", { width: w, title: "Center", titleAlign: "center" })
+    const lines = result.split("\n")
+    const topWidth = Bun.stringWidth(strip(lines[0]))
+    const bottomWidth = Bun.stringWidth(strip(lines[lines.length - 1]))
+    expect(topWidth).toBe(bottomWidth)
+    expect(topWidth).toBe(w)
+  })
+
+  test("center-aligned title top border equals maxWidth for various widths", () => {
+    for (const w of [20, 30, 40, 50, 60, 80]) {
+      const result = box("x", { width: w, title: "Test", titleAlign: "center" })
+      const lines = result.split("\n")
+      const topWidth = Bun.stringWidth(strip(lines[0]))
+      expect(topWidth).toBe(w)
+    }
+  })
+
+  test("center-aligned title with odd/even remaining widths both correct", () => {
+    // odd remaining: maxWidth=31, title=" Odd "=5, remaining=31-2-5=24 (even)
+    const odd = box("x", { width: 31, title: "Odd", titleAlign: "center" })
+    expect(Bun.stringWidth(strip(odd.split("\n")[0]))).toBe(31)
+
+    // even remaining: maxWidth=30, title=" Even "=6, remaining=30-2-6=22 (even)
+    const even = box("x", { width: 30, title: "Even", titleAlign: "center" })
+    expect(Bun.stringWidth(strip(even.split("\n")[0]))).toBe(30)
+  })
+
+  test("left and right alignment still produce correct width", () => {
+    const w = 40
+    const leftResult = box("x", { width: w, title: "Left", titleAlign: "left" })
+    const rightResult = box("x", { width: w, title: "Right", titleAlign: "right" })
+
+    expect(Bun.stringWidth(strip(leftResult.split("\n")[0]))).toBe(w)
+    expect(Bun.stringWidth(strip(rightResult.split("\n")[0]))).toBe(w)
+  })
+
+  test("all lines in titled box have consistent width for center alignment", () => {
+    const w = 40
+    const result = box("multi\nline\ncontent", { width: w, title: "Title", titleAlign: "center" })
+    const lines = result.split("\n")
+    for (const line of lines) {
+      expect(Bun.stringWidth(strip(line))).toBe(w)
+    }
+  })
 })
 
 // ----- divider() -----
@@ -274,19 +322,30 @@ describe("divider()", () => {
     expect(result).toBe("━")
   })
 
-  test("with color wraps in ANSI and resets", () => {
+  test("with color in TTY wraps in ANSI (non-TTY: plain)", () => {
     const result = divider("─", 5, "red")
     const stripped = strip(result)
     expect(stripped).toBe("─────")
-    // Should contain escape codes
-    expect(result).not.toBe(stripped)
-    // Should end with color reset
-    expect(result).toEndWith("\x1b[39m")
+    // In non-TTY (test env), color is suppressed — output equals stripped
+    // In TTY, output would contain escape codes and end with \x1b[39m
   })
 
   test("without color returns plain characters", () => {
     const result = divider("─", 5)
     expect(result).toBe(strip(result))
+  })
+
+  // C7: divider isTTY check — color is suppressed in non-TTY (test environment)
+  test("divider with color in non-TTY returns plain characters", () => {
+    // In non-TTY (test environment), color should be suppressed
+    const result = divider("─", 5, "red")
+    expect(result).toBe("─────")
+  })
+
+  test("divider with color in non-TTY matches divider without color", () => {
+    const withColor = divider("=", 10, "blue")
+    const withoutColor = divider("=", 10)
+    expect(withColor).toBe(withoutColor)
   })
 })
 

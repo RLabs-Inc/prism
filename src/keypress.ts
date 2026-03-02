@@ -86,19 +86,30 @@ export function rawMode(enable: boolean): void {
 
 /** Read a single keypress. Enables/disables raw mode automatically. */
 export function keypress(): Promise<KeyEvent> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     rawMode(true)
     process.stdin.resume()
     process.stdin.setEncoding("utf8")
 
-    const handler = (data: string) => {
+    function cleanup() {
       process.stdin.removeListener("data", handler)
+      process.stdin.removeListener("error", errorHandler)
       process.stdin.pause()
       rawMode(false)
+    }
+
+    const handler = (data: string) => {
+      cleanup()
       resolve(parseKey(data))
     }
 
+    const errorHandler = (err: Error) => {
+      cleanup()
+      reject(err)
+    }
+
     process.stdin.on("data", handler)
+    process.stdin.on("error", errorHandler)
   })
 }
 
@@ -113,12 +124,18 @@ export function keypressStream(callback: (key: KeyEvent) => void | "stop"): () =
     if (result === "stop") stop()
   }
 
+  const errorHandler = () => {
+    stop()
+  }
+
   const stop = () => {
     process.stdin.removeListener("data", handler)
+    process.stdin.removeListener("error", errorHandler)
     process.stdin.pause()
     rawMode(false)
   }
 
   process.stdin.on("data", handler)
+  process.stdin.on("error", errorHandler)
   return stop
 }

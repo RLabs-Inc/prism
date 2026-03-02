@@ -317,6 +317,39 @@ describe("spinner options", () => {
 })
 
 // =============================================================================
+// A5: Exit handler cleanup — end() uses try/finally
+// =============================================================================
+
+describe("exit handler safety", () => {
+  test("done() after done() is safe (idempotent)", () => {
+    const sp = spinner("test")
+    sp.done("first")
+    // second done should not throw
+    expect(() => sp.done("second")).not.toThrow()
+  })
+
+  test("fail() after done() is safe (idempotent)", () => {
+    const sp = spinner("test")
+    sp.done("first")
+    expect(() => sp.fail("second")).not.toThrow()
+  })
+
+  test("multiple spinners can run and complete independently", () => {
+    const sp1 = spinner("task 1")
+    const sp2 = spinner("task 2")
+    const sp3 = spinner("task 3")
+    captured = []
+    sp1.done("done 1")
+    sp2.fail("fail 2")
+    sp3.warn("warn 3")
+    const out = output()
+    expect(out).toContain("✓ done 1")
+    expect(out).toContain("✗ fail 2")
+    expect(out).toContain("⚠ warn 3")
+  })
+})
+
+// =============================================================================
 // SpinnerStyle TYPE
 // Verify all style names are valid SpinnerStyle values
 // =============================================================================

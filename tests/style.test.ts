@@ -245,6 +245,40 @@ describe("exact colors via fg/bg", () => {
     expect(result).toMatch(/\x1b\[48;/) // bg
     expect(Bun.stripANSI(result)).toBe("contrast")
   })
+
+  // A1: bgExact builds background from RGB directly, not string surgery
+  test("s.bg() with hex color builds 48;2;R;G;B sequence", () => {
+    if (!isTTY) return
+    const result = s.bg("#ff0000")("red bg")
+    // Must produce 48;2;255;0;0m (truecolor background)
+    expect(result).toContain(`${ESC}48;2;255;0;0m`)
+    expect(result).toContain(`${ESC}49m`) // bg off
+    expect(Bun.stripANSI(result)).toBe("red bg")
+  })
+
+  test("s.bg() with named CSS color produces 48;2 background", () => {
+    if (!isTTY) return
+    const result = s.bg("green")("green bg")
+    expect(result).toMatch(/\x1b\[48;2;\d+;\d+;\d+m/)
+    expect(Bun.stripANSI(result)).toBe("green bg")
+  })
+
+  test("s.bg() with rgb() CSS color produces 48;2 background", () => {
+    if (!isTTY) return
+    const result = s.bg("rgb(128, 64, 255)")("purple bg")
+    expect(result).toContain(`${ESC}48;2;128;64;255m`)
+    expect(Bun.stripANSI(result)).toBe("purple bg")
+  })
+
+  test("s.bg('red') produces background, not foreground", () => {
+    if (!isTTY) return
+    const result = s.bg("red")("bg test")
+    // Must NOT contain 38; (foreground)
+    expect(result).not.toMatch(/\x1b\[38;/)
+    // Must contain 48; (background)
+    expect(result).toMatch(/\x1b\[48;/)
+    expect(Bun.stripANSI(result)).toBe("bg test")
+  })
 })
 
 // ─── Non-TTY behavior ───────────────────────────────────────────────

@@ -200,12 +200,15 @@ export function spinner(text: string, options: SpinnerOptions = {}): Spinner {
     if (stopped) return
     stopped = true
     clearInterval(handle)
-    console.write(`${CR}${CLR}${iconColor(icon)} ${finalMsg}${elapsed()}\n`)
-    activeCount--
-    if (activeCount === 0) {
-      process.removeListener("exit", onExit)
+    try {
+      console.write(`${CR}${CLR}${iconColor(icon)} ${finalMsg}${elapsed()}\n`)
+    } finally {
+      activeCount--
+      if (activeCount === 0) {
+        process.removeListener("exit", onExit)
+      }
+      console.write(SHOW)
     }
-    console.write(SHOW)
   }
 
   return {

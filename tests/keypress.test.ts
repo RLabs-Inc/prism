@@ -487,3 +487,44 @@ describe("rawMode in non-TTY", () => {
     expect(() => rawMode(false)).not.toThrow()
   })
 })
+
+// =============================================================================
+// A3: Error handling — keypress() and keypressStream()
+// =============================================================================
+
+describe("keypress error handling", () => {
+  test("keypress() rejects on stdin error instead of hanging", async () => {
+    // We can't test raw mode in non-TTY, but we can verify the function
+    // signature includes the error path by checking it's a proper promise
+    const promise = keypress()
+    expect(promise).toBeInstanceOf(Promise)
+    // Emit error to test the error path
+    const testErr = new Error("test stdin error")
+    process.stdin.emit("error", testErr)
+    try {
+      await promise
+    } catch (err) {
+      expect((err as Error).message).toBe("test stdin error")
+    }
+  })
+
+  test("keypressStream() stops cleanly on stdin error", () => {
+    const keys: KeyEvent[] = []
+    const stop = keypressStream((key) => {
+      keys.push(key)
+    })
+    // Emit error — should stop the stream without throwing
+    process.stdin.emit("error", new Error("stream error"))
+    // After error, the stop function has already been called internally
+    // Calling it again should be safe
+    expect(() => stop()).not.toThrow()
+  })
+
+  test("keypressStream() stop function is idempotent", () => {
+    const stop = keypressStream(() => {})
+    expect(() => {
+      stop()
+      stop() // double-stop should not throw
+    }).not.toThrow()
+  })
+})

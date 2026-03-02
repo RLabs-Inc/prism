@@ -188,26 +188,26 @@ function printHelp(config: ArgsConfig, command?: string, commandDef?: CommandDef
 export function args(config: ArgsConfig): ArgsResult {
   const argv = config.argv ?? process.argv.slice(2)
 
-  // Detect command (first non-flag argument)
-  let command: string | undefined
-  let commandDef: CommandDef | undefined
-
-  if (config.commands) {
-    const firstPositional = argv.find(a => !a.startsWith("-"))
-    if (firstPositional && firstPositional in config.commands) {
-      command = firstPositional
-      commandDef = config.commands[command]
-    }
-  }
-
-  // Merge flags: built-in + global + command-specific
+  // Merge flags: built-in + global + all command flags for parsing
   const allFlagDefs: Record<string, FlagDef> = {}
 
   // global flags
   if (config.flags) Object.assign(allFlagDefs, config.flags)
 
-  // command flags
-  if (commandDef?.flags) Object.assign(allFlagDefs, commandDef.flags)
+  // Merge ALL command-specific flags (type + short only) so parseArgs knows their types.
+  // This prevents flag values (e.g. --output sync) from leaking into positionals.
+  // Defaults are NOT merged here — command defaults applied after command detection.
+  if (config.commands) {
+    for (const cmdDef of Object.values(config.commands)) {
+      if (cmdDef.flags) {
+        for (const [name, def] of Object.entries(cmdDef.flags)) {
+          if (!(name in allFlagDefs)) {
+            allFlagDefs[name] = { type: def.type, short: def.short }
+          }
+        }
+      }
+    }
+  }
 
   // built-in flags (don't override user-defined)
   if (!allFlagDefs["help"]) {
@@ -226,8 +226,11 @@ export function args(config: ArgsConfig): ArgsResult {
     parseOptions[name] = opt
   }
 
-  // Parse
+  // Parse first to separate flags from positionals
   let parsed: ReturnType<typeof parseArgs>
+  let command: string | undefined
+  let commandDef: CommandDef | undefined
+
   try {
     parsed = parseArgs({
       args: argv,
@@ -238,12 +241,37 @@ export function args(config: ArgsConfig): ArgsResult {
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     console.write(`${s.red("✗")} ${msg}\n`)
-    console.write(s.dim(`  Run '${config.name}${command ? ` ${command}` : ""} --help' for usage.\n\n`))
+    console.write(s.dim(`  Run '${config.name} --help' for usage.\n\n`))
     if (!config.noExit) process.exit(1)
     return { command, flags: {}, args: [], showHelp() { }, showVersion() { } }
   }
 
+  // Detect command from positionals (not raw argv) — prevents flag values from matching
+  if (config.commands) {
+    const firstPositional = parsed.positionals[0]
+    if (firstPositional && firstPositional in config.commands) {
+      command = firstPositional
+      commandDef = config.commands[command]
+    }
+  }
+
   const flags = parsed.values as Record<string, string | boolean | undefined>
+
+  // Apply command-specific flag defaults (override global defaults for same-named flags)
+  if (commandDef?.flags) {
+    for (const [name, def] of Object.entries(commandDef.flags)) {
+      // Only apply default if user didn't explicitly set the flag
+      // Check: was this flag explicitly in argv? If value equals global default, command default wins.
+      if (def.default !== undefined) {
+        const globalDef = config.flags?.[name]
+        const isFromGlobalDefault = globalDef?.default !== undefined && flags[name] === globalDef.default
+        const isUndefined = flags[name] === undefined
+        if (isFromGlobalDefault || isUndefined) {
+          flags[name] = def.default
+        }
+      }
+    }
+  }
   const positionals = parsed.positionals.filter(p => p !== command)
 
   // Result with help/version methods
@@ -273,8 +301,15 @@ export function args(config: ArgsConfig): ArgsResult {
 
   // No command given but commands are defined → show help (unless allowNoCommand)
   if (config.commands && !command && positionals.length === 0 && !config.allowNoCommand) {
-    // Check if any flags besides help/version were passed
-    const userFlags = Object.entries(flags).filter(([k, v]) => k !== "help" && k !== "version" && v !== undefined)
+    // Check if any flags were explicitly set by the user (not just default values)
+    const userFlags = Object.entries(flags).filter(([k, v]) => {
+      if (k === "help" || k === "version") return false
+      if (v === undefined) return false
+      // Check if this value is just the default — if so, user didn't set it
+      const def = allFlagDefs[k]
+      if (def?.default !== undefined && v === def.default) return false
+      return true
+    })
     if (userFlags.length === 0) {
       result.showHelp()
       if (!config.noExit) process.exit(0)

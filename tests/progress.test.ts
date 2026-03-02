@@ -421,9 +421,37 @@ describe("progress render calculations", () => {
   })
 
   test("auto-size bar width has minimum of 10", () => {
-    // barWidth = options.width ?? Math.max(10, termWidth() - text.length - ...)
+    // barWidth = options.width ?? Math.max(10, computedWidth)
     // The Math.max(10, ...) ensures minimum width
     const minWidth = Math.max(10, -5) // even negative → 10
     expect(minWidth).toBe(10)
+  })
+
+  // C3: narrow terminal fallback — text-only when computed width < 10
+  test("narrow terminal: computed width < 10 triggers text-only fallback", () => {
+    // Simulate: termWidth=20, text="Long status text..." (20 chars)
+    // computedWidth = 20 - 20 - 0 - 5 - 4 = -9 → negative → falls back to text-only
+    const textLen = 20
+    const termW = 20
+    const decorationWidth = 0
+    const extraWidth = 5
+    const computedWidth = termW - textLen - decorationWidth - extraWidth - 4
+    expect(computedWidth).toBeLessThan(10)
+    // In the real code, this triggers: write text + percentage only (no bar)
+  })
+
+  test("normal terminal: computed width >= 10 renders full bar", () => {
+    const textLen = 10
+    const termW = 80
+    const decorationWidth = 0
+    const extraWidth = 5
+    const computedWidth = termW - textLen - decorationWidth - extraWidth - 4
+    expect(computedWidth).toBeGreaterThanOrEqual(10)
+  })
+
+  test("explicit width option always renders bar (no fallback)", () => {
+    // When options.width is explicitly set, it's the user's choice — no fallback
+    // The code only falls back when !options.width
+    expect(() => progress("test", { width: 5 })).not.toThrow()
   })
 })

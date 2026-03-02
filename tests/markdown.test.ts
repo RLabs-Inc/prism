@@ -221,7 +221,98 @@ describe("md", () => {
         const output = md(input)
         expect(output).toContain(DIM)
       })
+
+      test("unordered list items use › marker", () => {
+        const input = "- Alpha\n- Beta"
+        const output = md(input)
+        const stripped = strip(output)
+        expect(stripped).toContain("› Alpha")
+        expect(stripped).toContain("› Beta")
+      })
     }
+
+    // B4: ordered list with nested unordered should NOT corrupt nested markers
+    test("ordered list with nested unordered list preserves bullet markers", () => {
+      const input = [
+        "1. First",
+        "2. Second",
+        "   - Nested A",
+        "   - Nested B",
+        "3. Third",
+      ].join("\n")
+      const output = md(input)
+      const stripped = strip(output)
+
+      // Ordered items should have numbers
+      expect(stripped).toContain("1.")
+      expect(stripped).toContain("First")
+      expect(stripped).toContain("Third")
+
+      // Nested unordered items should NOT have numbers
+      // In non-TTY they use "-", in TTY they use "›"
+      const bullet = hasColor ? "›" : "-"
+      expect(stripped).toContain(`${bullet} Nested A`)
+      expect(stripped).toContain(`${bullet} Nested B`)
+      // Should not number nested items
+      expect(stripped).not.toContain("3. Nested")
+      expect(stripped).not.toContain("4. Nested")
+    })
+
+    test("deeply nested mixed lists render correctly", () => {
+      const input = [
+        "1. Level 1",
+        "   - Bullet A",
+        "     1. Sub-ordered 1",
+        "     2. Sub-ordered 2",
+        "   - Bullet B",
+        "2. Level 2",
+      ].join("\n")
+      const output = md(input)
+      const stripped = strip(output)
+
+      expect(stripped).toContain("Level 1")
+      expect(stripped).toContain("Level 2")
+      expect(stripped).toContain("Bullet A")
+      expect(stripped).toContain("Bullet B")
+    })
+
+    test("standalone ordered list numbers correctly", () => {
+      const input = "1. One\n2. Two\n3. Three"
+      const output = md(input)
+      const stripped = strip(output)
+
+      expect(stripped).toContain("1.")
+      expect(stripped).toContain("2.")
+      expect(stripped).toContain("3.")
+      expect(stripped).toContain("One")
+      expect(stripped).toContain("Two")
+      expect(stripped).toContain("Three")
+    })
+
+    test("standalone unordered list has no numbers", () => {
+      const input = "- Alpha\n- Beta\n- Gamma"
+      const output = md(input)
+      const stripped = strip(output)
+
+      expect(stripped).not.toContain("1.")
+      expect(stripped).not.toContain("2.")
+      expect(stripped).toContain("Alpha")
+      expect(stripped).toContain("Beta")
+      expect(stripped).toContain("Gamma")
+    })
+
+    test("no sentinel characters leak into output", () => {
+      const input = "- Item 1\n- Item 2"
+      const output = md(input)
+      // Private use Unicode char should never appear in final output
+      expect(output).not.toContain("\uE000")
+    })
+
+    test("ordered list no sentinel characters leak", () => {
+      const input = "1. First\n2. Second"
+      const output = md(input)
+      expect(output).not.toContain("\uE000")
+    })
   })
 
   describe("blockquotes", () => {

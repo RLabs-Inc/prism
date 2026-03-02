@@ -68,6 +68,7 @@ export function kv(data: Record<string, string> | [string, string][], options: K
   } = options
 
   const entries = Array.isArray(data) ? data : Object.entries(data)
+  if (entries.length === 0) return ""
   const maxKeyWidth = Math.max(...entries.map(([k]) => Bun.stringWidth(k)))
   const prefix = " ".repeat(indentLevel)
 

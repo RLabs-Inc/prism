@@ -120,19 +120,18 @@ async function readInput(config: InputConfig): Promise<InputAction> {
   let savedInput = ""
   let prevCursorRow = 0  // which row of our block the cursor is on (for multi-line)
 
-  function getPrompt(): string {
-    return config.promptColor(resolvePrompt(config.prompt))
-  }
-
-  function getPromptWidth(): number {
-    return Bun.stringWidth(resolvePrompt(config.prompt))
+  /** Evaluate prompt once — returns both styled string and visual width */
+  function evalPrompt(): { styled: string; width: number } {
+    const raw = resolvePrompt(config.prompt)
+    return { styled: config.promptColor(raw), width: Bun.stringWidth(raw) }
   }
 
   /** Move cursor past the content block to a fresh line below */
   function exitContent() {
     const cols = termWidth()
     const display = config.mask ? config.mask.repeat(buffer.length) : buffer
-    const totalW = getPromptWidth() + Bun.stringWidth(display)
+    const { width: promptWidth } = evalPrompt()
+    const totalW = promptWidth + Bun.stringWidth(display)
     const rows = cols > 0 ? Math.max(1, Math.ceil(totalW / cols)) : 1
     const down = rows - 1 - prevCursorRow
     if (down > 0) console.write(`\x1b[${down}B`)
@@ -145,7 +144,7 @@ async function readInput(config: InputConfig): Promise<InputAction> {
     // ── multi-line aware render ──────────────────────────
     // handles input that wraps past terminal width
     const cols = termWidth()
-    const prompt = getPrompt()
+    const { styled: prompt, width: promptWidth } = evalPrompt()
     const hintText = hint ? s.dim("  " + hint) : ""
 
     // 1. move to origin of our content block
@@ -156,7 +155,6 @@ async function readInput(config: InputConfig): Promise<InputAction> {
     console.write(prompt + display + hintText)
 
     // 3. calculate dimensions
-    const promptWidth = getPromptWidth()
     const displayWidth = Bun.stringWidth(display)
     const hintWidth = hint ? Bun.stringWidth("  " + hint) : 0
     const totalWidth = promptWidth + displayWidth + hintWidth
@@ -281,6 +279,11 @@ async function readInput(config: InputConfig): Promise<InputAction> {
 
   // --- read loop ---
   return new Promise<InputAction>((resolve) => {
+    if (!process.stdin.isTTY) {
+      resolve({ action: "cancel" })
+      return
+    }
+
     let resolved = false
 
     process.stdin.setRawMode(true)
@@ -574,6 +577,33 @@ export async function repl(options: ReplOptions): Promise<void> {
 
   let cancelCount = 0
 
+  // C4: Single SIGINT handler — replaced per invocation, never accumulates
+  let activeSigInt: (() => void) | null = null
+
+  function installSigInt(controller: AbortController): void {
+    // Remove any stale handler before installing new one
+    if (activeSigInt) {
+      process.removeListener("SIGINT", activeSigInt)
+      activeSigInt = null
+    }
+    let forceExit = false
+    const handler = () => {
+      if (forceExit) { console.write("\n"); process.exit(130) }
+      controller.abort()
+      forceExit = true
+      console.write(s.dim("\n(interrupted - Ctrl+C again to force exit)") + "\n")
+    }
+    activeSigInt = handler
+    process.on("SIGINT", handler)
+  }
+
+  function removeSigInt(): void {
+    if (activeSigInt) {
+      process.removeListener("SIGINT", activeSigInt)
+      activeSigInt = null
+    }
+  }
+
   while (true) {
     beforePrompt?.()
 
@@ -621,15 +651,7 @@ export async function repl(options: ReplOptions): Promise<void> {
       const cmd = commandMap.get(cmdName)
       if (cmd) {
         const controller = new AbortController()
-        let forceExit = false
-        const onSigInt = () => {
-          if (forceExit) { console.write("\n"); process.exit(130) }
-          controller.abort()
-          forceExit = true
-          console.write(s.dim("\n(interrupted - Ctrl+C again to force exit)") + "\n")
-        }
-        process.on("SIGINT", onSigInt)
-
+        installSigInt(controller)
         try {
           await cmd.def.handler(cmdArgs, controller.signal)
         } catch (err) {
@@ -637,9 +659,8 @@ export async function repl(options: ReplOptions): Promise<void> {
             console.write(`${s.red("✗")} ${(err as Error)?.message ?? err}\n`)
           }
         } finally {
-          process.removeListener("SIGINT", onSigInt)
+          removeSigInt()
         }
-
         continue
       }
 
@@ -653,15 +674,7 @@ export async function repl(options: ReplOptions): Promise<void> {
 
     // ── regular input: call handler with abort support ─
     const controller = new AbortController()
-    let forceExit = false
-    const onSigInt = () => {
-      if (forceExit) { console.write("\n"); process.exit(130) }
-      controller.abort()
-      forceExit = true
-      console.write(s.dim("\n(interrupted - Ctrl+C again to force exit)") + "\n")
-    }
-    process.on("SIGINT", onSigInt)
-
+    installSigInt(controller)
     try {
       const output = await onInput(input, controller.signal)
       if (typeof output === "string" && output) {
@@ -673,7 +686,7 @@ export async function repl(options: ReplOptions): Promise<void> {
         console.write(`${s.red("✗")} ${(err as Error)?.message ?? err}\n`)
       }
     } finally {
-      process.removeListener("SIGINT", onSigInt)
+      removeSigInt()
     }
   }
 

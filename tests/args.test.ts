@@ -769,6 +769,160 @@ describe("args", () => {
     })
   })
 
+  // C2: auto-help not suppressed by boolean defaults
+  describe("auto-help with boolean defaults", () => {
+    test("tool with boolean default:false shows help on no args", () => {
+      args({
+        name: "hunt",
+        commands: { sync: { description: "Sync" } },
+        flags: {
+          verbose: { type: "boolean", default: false },
+        },
+        argv: [],
+        noExit: true,
+      })
+
+      const out = Bun.stripANSI(capturedOutput())
+      expect(out).toContain("USAGE")
+      expect(out).toContain("hunt")
+    })
+
+    test("tool with string default shows help on no args", () => {
+      args({
+        name: "hunt",
+        commands: { sync: { description: "Sync" } },
+        flags: {
+          format: { type: "string", default: "json" },
+        },
+        argv: [],
+        noExit: true,
+      })
+
+      const out = Bun.stripANSI(capturedOutput())
+      expect(out).toContain("USAGE")
+    })
+
+    test("explicit flag value suppresses auto-help", () => {
+      const result = args({
+        name: "hunt",
+        commands: { sync: { description: "Sync" } },
+        flags: {
+          verbose: { type: "boolean" },
+        },
+        argv: ["--verbose"],
+        noExit: true,
+      })
+
+      // Should NOT show help — user explicitly passed --verbose
+      expect(result.flags.verbose).toBe(true)
+    })
+
+    test("explicit boolean true overrides default:false and suppresses help", () => {
+      const result = args({
+        name: "hunt",
+        commands: { sync: { description: "Sync" } },
+        flags: {
+          verbose: { type: "boolean", default: false },
+        },
+        argv: ["--verbose"],
+        noExit: true,
+      })
+
+      expect(result.flags.verbose).toBe(true)
+    })
+  })
+
+  // C1: command detection from positionals, not raw argv
+  describe("command detection vs flag values", () => {
+    test("flag value matching a command name is NOT treated as command", () => {
+      const result = args({
+        name: "hunt",
+        commands: {
+          sync: { description: "Sync programs" },
+        },
+        flags: {
+          output: { type: "string", short: "o" },
+        },
+        argv: ["--output", "sync"],
+        noExit: true,
+      })
+
+      // "sync" is a flag value, not a command
+      expect(result.command).toBeUndefined()
+      expect(result.flags.output).toBe("sync")
+    })
+
+    test("flag value matching command with short flag is NOT treated as command", () => {
+      const result = args({
+        name: "hunt",
+        commands: {
+          list: { description: "List programs" },
+        },
+        flags: {
+          format: { type: "string", short: "f" },
+        },
+        argv: ["-f", "list"],
+        noExit: true,
+      })
+
+      expect(result.command).toBeUndefined()
+      expect(result.flags.format).toBe("list")
+    })
+
+    test("command-specific flag value matching another command is NOT treated as command", () => {
+      const result = args({
+        name: "hunt",
+        commands: {
+          sync: {
+            description: "Sync",
+            flags: { target: { type: "string" } },
+          },
+          search: { description: "Search" },
+        },
+        argv: ["sync", "--target", "search"],
+        noExit: true,
+      })
+
+      expect(result.command).toBe("sync")
+      expect(result.flags.target).toBe("search")
+      expect(result.args).toEqual([])
+    })
+
+    test("actual command in positional still detected correctly", () => {
+      const result = args({
+        name: "hunt",
+        commands: {
+          sync: { description: "Sync programs" },
+        },
+        flags: {
+          verbose: { type: "boolean" },
+        },
+        argv: ["sync", "--verbose"],
+        noExit: true,
+      })
+
+      expect(result.command).toBe("sync")
+      expect(result.flags.verbose).toBe(true)
+    })
+
+    test("command before flag still works", () => {
+      const result = args({
+        name: "hunt",
+        commands: {
+          search: { description: "Search assets" },
+        },
+        flags: {
+          output: { type: "string" },
+        },
+        argv: ["search", "--output", "file.txt"],
+        noExit: true,
+      })
+
+      expect(result.command).toBe("search")
+      expect(result.flags.output).toBe("file.txt")
+    })
+  })
+
   describe("edge cases", () => {
     test("no flags defined at all", () => {
       const result = args({

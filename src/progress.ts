@@ -106,7 +106,15 @@ export function progress(text: string, options: ProgressOptions = {}): ProgressB
     // auto-size bar to fit: text + bar + decorations
     const decorationWidth = bs.left.length + bs.right.length
     const extraWidth = (showPercent ? 5 : 0) + (showCount ? String(total).length * 2 + 2 : 0) + (showETA ? 10 : 0)
-    const barWidth = options.width ?? Math.max(10, termWidth() - Bun.stringWidth(text) - decorationWidth - extraWidth - 4)
+    const computedWidth = options.width ?? (termWidth() - Bun.stringWidth(text) - decorationWidth - extraWidth - 4)
+
+    // Narrow terminal fallback: skip bar, show text-only with percentage
+    if (computedWidth < 10 && !options.width) {
+      console.write(`${CR}${CLR}${text} ${s.bold(`${Math.round(pct * 100)}%`)}`)
+      return
+    }
+
+    const barWidth = Math.max(10, computedWidth)
 
     let bar: string
     const canSmooth = smoothMode && (style === "bar" || style === "shades" || style === "blocks")
@@ -143,11 +151,14 @@ export function progress(text: string, options: ProgressOptions = {}): ProgressB
   function end(icon: string, msg: string, iconColor: (t: string) => string) {
     if (stopped) return
     stopped = true
-    const elapsed = s.dim(`${((Date.now() - t0) / 1000).toFixed(1)}s`)
-    console.write(`${CR}${CLR}${iconColor(icon)} ${msg} ${elapsed}\n`)
-    activeCount--
-    if (activeCount === 0) process.removeListener("exit", onExit)
-    console.write(SHOW)
+    try {
+      const elapsed = s.dim(`${((Date.now() - t0) / 1000).toFixed(1)}s`)
+      console.write(`${CR}${CLR}${iconColor(icon)} ${msg} ${elapsed}\n`)
+    } finally {
+      activeCount--
+      if (activeCount === 0) process.removeListener("exit", onExit)
+      console.write(SHOW)
+    }
   }
 
   return {

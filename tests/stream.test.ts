@@ -36,7 +36,7 @@ function output(): string {
 
 const CR_CLR = "\r\x1b[2K"
 const RED = "\x1b[31m"
-const RESET = "\x1b[0m"
+const COLOR_OFF = "\x1b[39m"
 
 // =============================================================================
 // MOCK LAYOUT
@@ -298,7 +298,7 @@ describe("fail", () => {
   test("fail writes error text in red", () => {
     const s = stream({ tty: true })
     s.fail("something broke")
-    expect(output()).toContain(`${RED}something broke${RESET}`)
+    expect(output()).toContain(`${RED}something broke${COLOR_OFF}`)
   })
 
   test("fail flushes buffer first", () => {
@@ -309,7 +309,7 @@ describe("fail", () => {
     const out = output()
     // Buffer flushed before error
     const bufIdx = out.indexOf("partial\n")
-    const errIdx = out.indexOf(`${RED}error!${RESET}`)
+    const errIdx = out.indexOf(`${RED}error!${COLOR_OFF}`)
     expect(bufIdx).toBeGreaterThanOrEqual(0)
     expect(errIdx).toBeGreaterThan(bufIdx)
   })
@@ -318,7 +318,7 @@ describe("fail", () => {
     const mock = mockLayout()
     const s = stream({ layout: mock.layout })
     s.fail("oops")
-    expect(mock.lines).toEqual([`${RED}oops${RESET}`])
+    expect(mock.lines).toEqual([`${RED}oops${COLOR_OFF}`])
   })
 })
 
@@ -388,5 +388,19 @@ describe("non-TTY mode", () => {
     s.write(" world")
     expect(output()).not.toContain("\x1b")
     s.done()
+  })
+})
+
+// =============================================================================
+// A6: fail() uses s.red() via style system, not raw ANSI
+// =============================================================================
+
+describe("fail uses style system", () => {
+  test("fail() output uses s.red (31m open, 39m close)", () => {
+    const st = stream({ tty: true })
+    st.fail("error message")
+    const out = output()
+    // s.red uses \x1b[31m (open) and \x1b[39m (close), not \x1b[0m (full reset)
+    expect(out).toContain(`${RED}error message${COLOR_OFF}`)
   })
 })

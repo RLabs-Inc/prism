@@ -335,6 +335,65 @@ describe("table() truncation", () => {
     expect(result).not.toContain("…")
     expect(result).toContain("hello")
   })
+
+  // B6: ANSI-aware truncation via text.ts import
+  test("ANSI-styled cell content truncates correctly without breaking escape sequences", () => {
+    // Color function wraps text in ANSI — truncation must not cut mid-sequence
+    const data = [{ name: "\x1b[32mAlice in Wonderland\x1b[39m" }]
+    const result = table(data, {
+      columns: [{ key: "name", maxWidth: 10 }],
+      maxWidth: 40,
+    })
+    // Strip should show truncated text with ellipsis
+    const stripped = strip(result)
+    expect(stripped).toContain("…")
+    expect(stripped).toContain("Alice")
+    // The raw output should NOT have broken ANSI sequences
+    // (no partial \x1b[ without a terminating letter)
+    const rawDataRow = result.split("\n")[3] // data row
+    const partialAnsi = rawDataRow.match(/\x1b\[[^a-zA-Z]*$/)?.[0]
+    expect(partialAnsi).toBeUndefined()
+  })
+
+  test("ANSI-styled cell within maxWidth is not truncated", () => {
+    const data = [{ name: "\x1b[31mBob\x1b[39m" }]
+    const result = table(data, {
+      columns: [{ key: "name", maxWidth: 10 }],
+      maxWidth: 40,
+    })
+    const stripped = strip(result)
+    expect(stripped).toContain("Bob")
+    expect(stripped).not.toContain("…")
+  })
+
+  test("table cell with color function truncates ANSI-aware", () => {
+    const data = [{ text: "a very long colored value" }]
+    const result = table(data, {
+      columns: [{ key: "text", maxWidth: 10, color: (v) => `\x1b[36m${v}\x1b[39m` }],
+      maxWidth: 40,
+    })
+    const stripped = strip(result)
+    expect(stripped).toContain("…")
+    // The visible truncated text should be ≤ 10 chars
+    const lines = stripped.split("\n")
+    const dataRow = lines[3]
+    // Extract the cell content between borders
+    const cellMatch = dataRow.match(/│\s*(.*?)\s*│/)
+    if (cellMatch) {
+      const cellWidth = Bun.stringWidth(cellMatch[1])
+      expect(cellWidth).toBeLessThanOrEqual(10)
+    }
+  })
+
+  test("plain text cell still truncates correctly", () => {
+    const data = [{ text: "this is plain and long" }]
+    const result = strip(table(data, {
+      columns: [{ key: "text", maxWidth: 8 }],
+      maxWidth: 40,
+    }))
+    expect(result).toContain("…")
+    expect(result).toContain("this is")
+  })
 })
 
 // ----- borderColor -----

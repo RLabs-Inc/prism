@@ -4,6 +4,7 @@
 import { termWidth } from "./writer"
 import { s } from "./style"
 import { borders, type BorderStyle } from "./box"
+import { truncate } from "./text"
 
 type Align = "left" | "center" | "right"
 
@@ -41,20 +42,6 @@ function alignText(text: string, width: number, align: Align): string {
   return text + " ".repeat(diff)
 }
 
-function truncate(text: string, maxWidth: number): string {
-  if (Bun.stringWidth(text) <= maxWidth) return text
-
-  // Simple truncation with ellipsis
-  let result = ""
-  let width = 0
-  for (const char of text) {
-    const charWidth = Bun.stringWidth(char)
-    if (width + charWidth + 1 > maxWidth) break // +1 for ellipsis
-    result += char
-    width += charWidth
-  }
-  return result + "…"
-}
 
 export function table(data: Record<string, unknown>[], options: TableOptions = {}): string {
   if (data.length === 0) return ""

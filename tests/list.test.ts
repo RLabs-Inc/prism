@@ -276,6 +276,17 @@ describe("kv()", () => {
     expect(lines[2]).toContain("M")
   })
 
+  // C5: kv() empty guard
+  test("kv({}) returns empty string", () => {
+    const result = kv({})
+    expect(result).toBe("")
+  })
+
+  test("kv([]) returns empty string", () => {
+    const result = kv([])
+    expect(result).toBe("")
+  })
+
   test("single key-value pair renders one line", () => {
     const result = strip(kv({ Solo: "only" }))
     expect(result.split("\n").length).toBe(1)

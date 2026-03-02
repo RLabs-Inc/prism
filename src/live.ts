@@ -59,6 +59,14 @@ function deactivate() {
 // with footer: renders footer below content, cursor stays at
 // "one line after last content line" (same invariant as without footer)
 
+/** Calculate visual rows a line occupies (accounting for terminal wrapping) */
+function visualRows(line: string): number {
+  const width = process.stdout.columns || 80
+  const w = Bun.stringWidth(Bun.stripANSI(line))
+  if (w === 0) return 1
+  return Math.ceil(w / width)
+}
+
 function createBlock(footer?: FooterConfig) {
   let prevHeight = 0
 
@@ -81,11 +89,15 @@ function createBlock(footer?: FooterConfig) {
         for (const line of footerLines) {
           console.write(`${line}\n`)
         }
-        // move cursor back above footer (to line after last content line)
-        if (footerLines.length > 0) console.write(`\x1b[${footerLines.length}A`)
+        // move cursor back above footer — use visual rows for footer too
+        if (footerLines.length > 0) {
+          const footerVisualRows = footerLines.reduce((sum, l) => sum + visualRows(l), 0)
+          console.write(`\x1b[${footerVisualRows}A`)
+        }
       }
 
-      prevHeight = lines.length
+      // track visual rows, not logical lines
+      prevHeight = lines.reduce((sum, l) => sum + visualRows(l), 0)
     },
 
     /** Render final frozen content and notify footer owner */
@@ -240,14 +252,17 @@ export function activity(text: string, options: ActivityOptions = {}): Activity 
     stopped = true
     clearInterval(handle)
 
-    if (block) {
-      // footer mode: freeze content and let footer owner redraw
-      block.freeze([buildFinalLine(endIcon, finalMsg, iconColor)])
-    } else {
-      // classic mode: overwrite line with final state
-      console.write(`\r\x1b[2K${buildFinalLine(endIcon, finalMsg, iconColor)}\n`)
+    try {
+      if (block) {
+        // footer mode: freeze content and let footer owner redraw
+        block.freeze([buildFinalLine(endIcon, finalMsg, iconColor)])
+      } else {
+        // classic mode: overwrite line with final state
+        console.write(`\r\x1b[2K${buildFinalLine(endIcon, finalMsg, iconColor)}\n`)
+      }
+    } finally {
+      deactivate()
     }
-    deactivate()
   }
 
   return {
@@ -385,19 +400,22 @@ export function section(title: string, options: SectionOptions = {}): Section {
     stopped = true
     clearInterval(handle)
 
-    msg = finalMsg
-    const lines: string[] = []
-    lines.push(`${pad}${iconColor(icon)} ${finalMsg}${timerStr()}`)
+    try {
+      msg = finalMsg
+      const lines: string[] = []
+      lines.push(`${pad}${iconColor(icon)} ${finalMsg}${timerStr()}`)
 
-    if (!collapseOnDone) {
-      for (const item of items) {
-        lines.push(`${pad}${s.dim(connector)}  ${item}`)
+      if (!collapseOnDone) {
+        for (const item of items) {
+          lines.push(`${pad}${s.dim(connector)}  ${item}`)
+        }
       }
-    }
 
-    // freeze content and let footer owner redraw
-    block.freeze(lines)
-    deactivate()
+      // freeze content and let footer owner redraw
+      block.freeze(lines)
+    } finally {
+      deactivate()
+    }
   }
 
   return {

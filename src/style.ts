@@ -101,8 +101,13 @@ function fgExact(color: string): string {
 }
 
 function bgExact(color: string): string {
-  const fg = Bun.color(color, "ansi") ?? ""
-  return fg.replace(`${ESC}38;`, `${ESC}48;`)
+  const rgba = Bun.color(color, "css")
+  if (!rgba) return ""
+  // Parse RGB from css format and build background sequence directly
+  // This avoids the string surgery that breaks for ANSI 16 codes
+  const match = rgba.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/)
+  if (!match) return ""
+  return `${ESC}48;2;${match[1]};${match[2]};${match[3]}m`
 }
 
 const styles: Record<string, StyleDef> = {

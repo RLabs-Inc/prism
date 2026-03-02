@@ -10,6 +10,7 @@ import { layout } from "../src/layout"
 
 let captured: string[]
 const originalWrite = console.write
+const originalColumns = process.stdout.columns
 
 beforeEach(() => {
   captured = []
@@ -368,6 +369,66 @@ describe("cursor positioning", () => {
     l.refresh()
     const out = output()
     expect(out).toContain(RIGHT(10))
+    l.close()
+  })
+
+  test("cursor col is clamped to line display width (ANSI safety)", () => {
+    const l = layout({ tty: true })
+    // Line has ANSI codes: "\x1b[36m" (5 bytes) + "hello" (5 visible) + "\x1b[39m" (4 bytes) = 14 bytes but 5 visual
+    // If caller passes col=14 (byte length), cursor should be clamped to 5 (visual width)
+    l.setActive(() => ({
+      lines: ["\x1b[36mhello\x1b[39m"],
+      cursor: [0, 14],
+    }))
+    const out = output()
+    // Should position cursor at visual col 5, not byte col 14
+    expect(out).toContain(RIGHT(5))
+    expect(out).not.toContain(RIGHT(14))
+    l.close()
+  })
+
+  test("cursor with ANSI-styled content on correct visual col", () => {
+    const l = layout({ tty: true })
+    // ">>> " (4 visible) + "\x1b[1m" (bold, 0 visible) + "typed" (5 visible)
+    // visual width = 9. cursor at col 9 should work fine.
+    l.setActive(() => ({
+      lines: [">>> \x1b[1mtyped\x1b[0m"],
+      cursor: [0, 9],
+    }))
+    const out = output()
+    expect(out).toContain(RIGHT(9))
+    l.close()
+  })
+
+  test("cursor on wrapped ANSI line computes sub-row correctly", () => {
+    // Set terminal to 40 columns
+    Object.defineProperty(process.stdout, "columns", { value: 40, writable: true })
+    const l = layout({ tty: true })
+    // Line: 60 visible chars = 2 visual rows on 40-col
+    l.setActive(() => ({
+      lines: ["A".repeat(60)],
+      cursor: [0, 50],
+    }))
+    const out = output()
+    // col 50 on 40-col terminal: sub-row 1 (50/40 = 1), adjusted col = 50%40 = 10
+    // total visual rows = 2, cursor at visual row 1, move up = 2-1 = 1
+    expect(out).toContain(UP(1))
+    expect(out).toContain(RIGHT(10))
+    // Reset columns
+    Object.defineProperty(process.stdout, "columns", { value: originalColumns, writable: true })
+    l.close()
+  })
+
+  test("cursor col beyond display width clamped to line end", () => {
+    const l = layout({ tty: true })
+    // "abc" = 3 visible chars. Cursor col 100 should be clamped to 3
+    l.setActive(() => ({
+      lines: ["abc"],
+      cursor: [0, 100],
+    }))
+    const out = output()
+    expect(out).toContain(RIGHT(3))
+    expect(out).not.toContain(RIGHT(100))
     l.close()
   })
 })

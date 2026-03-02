@@ -67,3 +67,9 @@ export { layout, type Layout, type LayoutOptions, type ActiveRender, type Layout
 
 // Stream
 export { stream, type Stream, type StreamOptions } from "./stream"
+
+// Line Editor
+export { lineEditor, type LineEditor, type LineEditorOptions, type LineEditorState } from "./line-editor"
+
+// Exec — controlled live command output viewer
+export { exec, type Exec, type ExecOptions } from "./exec"

@@ -85,14 +85,38 @@ function detectLanguage(code: string): Language {
   return "typescript" // default
 }
 
-function highlightLine(line: string, lang: Language): string {
-  if (!isTTY) return line
-  if (lang === "json") return highlightJSON(line)
+/** Cross-line state for multi-line strings (template literals) */
+interface HighlightState {
+  /** The quote character that opened the current string, or null */
+  inString: string | null
+}
+
+function highlightLine(line: string, lang: Language, state: HighlightState = { inString: null }): { result: string; state: HighlightState } {
+  if (!isTTY) return { result: line, state }
+  if (lang === "json") return { result: highlightJSON(line), state: { inString: null } }
 
   const kw = keywords[lang] ?? keywords['typescript']
   const bi = builtins[lang] ?? builtins['typescript']
   let result = ""
   let i = 0
+
+  // If we're continuing a multi-line string from a previous line
+  if (state.inString !== null) {
+    const quote = state.inString
+    while (i < line.length && line[i] !== quote) {
+      if (line[i] === "\\") i++
+      i++
+    }
+    if (i < line.length) {
+      // Found closing quote on this line
+      i++ // include the closing quote
+      result += s.green(line.slice(0, i))
+      state = { inString: null }
+    } else {
+      // Entire line is inside the string
+      return { result: s.green(line), state: { inString: quote } }
+    }
+  }
 
   while (i < line.length) {
     // comments
@@ -117,9 +141,16 @@ function highlightLine(line: string, lang: Language): string {
         if (line[j] === "\\") j++
         j++
       }
-      if (j < line.length) j++
-      result += s.green(line.slice(i, j))
-      i = j
+      if (j < line.length) {
+        // Closing quote found on same line
+        j++
+        result += s.green(line.slice(i, j))
+        i = j
+      } else {
+        // Multi-line string: no closing quote on this line (only valid for backticks)
+        result += s.green(line.slice(i))
+        return { result, state: { inString: quote } }
+      }
       continue
     }
 
@@ -160,7 +191,7 @@ function highlightLine(line: string, lang: Language): string {
     i++
   }
 
-  return result
+  return { result, state: { inString: null } }
 }
 
 function highlightJSON(line: string): string {
@@ -183,8 +214,10 @@ export function highlight(code: string, options: HighlightOptions = {}): string 
   const lines = code.split("\n")
   const gutterWidth = lineNumbers ? String(startLine + lines.length - 1).length : 0
 
+  let lineState: HighlightState = { inString: null }
   return lines.map((line, i) => {
-    const highlighted = highlightLine(line, lang)
+    const { result: highlighted, state: nextState } = highlightLine(line, lang, lineState)
+    lineState = nextState
     if (lineNumbers) {
       const num = String(startLine + i).padStart(gutterWidth)
       return `${s.dim(num)} ${s.dim("│")} ${highlighted}`

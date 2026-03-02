@@ -15,7 +15,12 @@ import { stream as createStream, type StreamOptions, type Stream } from "./strea
 
 // ── Types ─────────────────────────────────────
 
-/** Render function for the active zone */
+/**
+ * Render function for the active zone.
+ * `cursor` is [row, col] where both are zero-indexed visual positions:
+ * - row: logical line index (0 = first line)
+ * - col: visual column (display position, NOT byte offset — exclude ANSI bytes)
+ */
 export type ActiveRender = () => {
   lines: string[]
   cursor?: [row: number, col: number]
@@ -98,6 +103,13 @@ export function layout(options?: LayoutOptions): Layout {
 
   // ── TTY mode ──────────────────────────────────
 
+  // Synchronized output (DEC private mode 2026) — prevents flicker by telling the terminal
+  // to buffer all writes between BEGIN/END and render as a single atomic frame.
+  // Supported by iTerm2, Kitty, WezTerm, Ghostty, Alacritty, Windows Terminal, etc.
+  // Terminals that don't support it simply ignore the sequences.
+  const SYNC_BEGIN = "\x1b[?2026h"
+  const SYNC_END = "\x1b[?2026l"
+
   let renderFn: ActiveRender | null = null
   let prevHeight = 0
   let prevCursorRow = 0
@@ -138,19 +150,25 @@ export function layout(options?: LayoutOptions): Layout {
     if (cursor && lines.length > 0) {
       const [row, col] = cursor
 
+      // Clamp col to the actual display width of the cursor line
+      // (prevents mispositioned cursor if caller passes byte offset instead of visual col)
+      const cursorLine = row < lines.length ? lines[row] : ""
+      const lineDisplayWidth = Bun.stringWidth(Bun.stripANSI(cursorLine))
+      const safeCol = Math.min(col, lineDisplayWidth)
+
       // Visual rows from top to start of cursor's logical line
       let cursorLineStart = 0
       for (let i = 0; i < row; i++) cursorLineStart += rowsPerLine[i]!
 
       // Which visual sub-row within the cursor line (if it wraps)
-      const cursorSubRow = col >= width ? Math.floor(col / width) : 0
+      const cursorSubRow = safeCol >= width ? Math.floor(safeCol / width) : 0
       const cursorVisualRow = cursorLineStart + cursorSubRow
 
       // Move up from bottom (totalVisualRows) to cursor position
       const moveUp = totalVisualRows - cursorVisualRow
       if (moveUp > 0) console.write(`\x1b[${moveUp}A`)
       console.write("\r")
-      const adjustedCol = col >= width ? col % width : col
+      const adjustedCol = safeCol >= width ? safeCol % width : safeCol
       if (adjustedCol > 0) console.write(`\x1b[${adjustedCol}C`)
 
       prevCursorRow = cursorVisualRow
@@ -196,23 +214,29 @@ export function layout(options?: LayoutOptions): Layout {
         renderFn = render
         return
       }
+      console.write(SYNC_BEGIN)
       eraseActive()
       renderFn = render
       drawActive()
+      console.write(SYNC_END)
     },
 
     refresh() {
       if (closed || !renderFn) return
       if (liveActive > 0) return // live component handles footer rendering
+      console.write(SYNC_BEGIN)
       eraseActive()
       drawActive()
+      console.write(SYNC_END)
     },
 
     print(text) {
       if (closed) return
+      console.write(SYNC_BEGIN)
       eraseActive()
       console.write(text + "\n")
       drawActive()
+      console.write(SYNC_END)
     },
 
     write(data) {
@@ -227,9 +251,11 @@ export function layout(options?: LayoutOptions): Layout {
       const complete = writeBuffer.slice(0, lastNewline)
       writeBuffer = writeBuffer.slice(lastNewline + 1)
 
+      console.write(SYNC_BEGIN)
       eraseActive()
       console.write(complete + "\n")
       drawActive()
+      console.write(SYNC_END)
     },
 
     close(message?) {

@@ -15,6 +15,8 @@ const SHOW = "\x1b[?25h"
 
 interface ConfirmOptions {
   default?: boolean
+  /** AbortSignal — if provided, Ctrl+C rejects with AbortError instead of process.exit */
+  signal?: AbortSignal
 }
 
 /** Ask a yes/no question. Returns true for yes, false for no. */
@@ -47,6 +49,9 @@ export async function confirm(message: string, options: ConfirmOptions = {}): Pr
     }
     if (key.ctrl && key.key === "c") {
       console.write("\n")
+      if (options.signal) {
+        throw new DOMException("Prompt aborted", "AbortError")
+      }
       process.exit(130)
     }
   }
@@ -58,6 +63,8 @@ interface InputOptions {
   default?: string
   placeholder?: string
   validate?: (value: string) => string | true  // return error message or true
+  /** AbortSignal — if provided, Ctrl+C rejects with AbortError instead of process.exit */
+  signal?: AbortSignal
 }
 
 /** Prompt for text input with inline editing. */
@@ -86,6 +93,9 @@ export async function input(message: string, options: InputOptions = {}): Promis
 
     if (key.ctrl && key.key === "c") {
       console.write("\n" + SHOW)
+      if (options.signal) {
+        throw new DOMException("Prompt aborted", "AbortError")
+      }
       process.exit(130)
     }
 
@@ -107,10 +117,14 @@ export async function input(message: string, options: InputOptions = {}): Promis
     }
 
     if (key.key === "backspace") {
-      if (value.length > 0) {
-        value = value.slice(0, -1)
-        cursor = Math.max(0, cursor - 1)
+      if (cursor > 0) {
+        value = value.slice(0, cursor - 1) + value.slice(cursor)
+        cursor--
       }
+    } else if (key.key === "left") {
+      if (cursor > 0) cursor--
+    } else if (key.key === "right") {
+      if (cursor < value.length) cursor++
     } else if (key.char && !key.ctrl && !key.meta) {
       value = value.slice(0, cursor) + key.char + value.slice(cursor)
       cursor++
@@ -122,8 +136,13 @@ export async function input(message: string, options: InputOptions = {}): Promis
 
 // --- Password Input ---
 
+interface PasswordOptions {
+  /** AbortSignal — if provided, Ctrl+C rejects with AbortError instead of process.exit */
+  signal?: AbortSignal
+}
+
 /** Prompt for password input (characters shown as dots). */
-export async function password(message: string): Promise<string> {
+export async function password(message: string, options: PasswordOptions = {}): Promise<string> {
   if (!isTTY) {
     console.write(`${s.cyan("?")} ${message}\n`)
     return ""
@@ -143,6 +162,9 @@ export async function password(message: string): Promise<string> {
 
     if (key.ctrl && key.key === "c") {
       console.write("\n")
+      if (options.signal) {
+        throw new DOMException("Prompt aborted", "AbortError")
+      }
       process.exit(130)
     }
 
@@ -166,6 +188,8 @@ export async function password(message: string): Promise<string> {
 interface SelectOptions {
   /** Number of visible items before scrolling (default: 7) */
   pageSize?: number
+  /** AbortSignal — if provided, Ctrl+C rejects with AbortError instead of process.exit */
+  signal?: AbortSignal
 }
 
 /** Choose one item from a list using arrow keys. */
@@ -214,7 +238,7 @@ export async function select(message: string, choices: string[], options: Select
 
   render()
 
-  return new Promise<string>((resolve) => {
+  return new Promise<string>((resolve, reject) => {
     const stop = keypressStream((key) => {
       if (key.key === "up" || key.key === "k") {
         selected = (selected - 1 + choices.length) % choices.length
@@ -238,6 +262,10 @@ export async function select(message: string, choices: string[], options: Select
       } else if (key.ctrl && key.key === "c") {
         stop()
         console.write("\n" + SHOW)
+        if (options.signal) {
+          reject(new DOMException("Prompt aborted", "AbortError"))
+          return "stop"
+        }
         process.exit(130)
       }
     })
@@ -250,6 +278,8 @@ interface MultiSelectOptions {
   pageSize?: number
   min?: number
   max?: number
+  /** AbortSignal — if provided, Ctrl+C rejects with AbortError instead of process.exit */
+  signal?: AbortSignal
 }
 
 /** Choose multiple items from a list using arrow keys + space to toggle. */
@@ -294,7 +324,7 @@ export async function multiselect(message: string, choices: string[], options: M
 
   render()
 
-  return new Promise<string[]>((resolve) => {
+  return new Promise<string[]>((resolve, reject) => {
     const stop = keypressStream((key) => {
       if (key.key === "up" || key.key === "k") {
         cursor = (cursor - 1 + choices.length) % choices.length
@@ -336,6 +366,10 @@ export async function multiselect(message: string, choices: string[], options: M
       } else if (key.ctrl && key.key === "c") {
         stop()
         console.write("\n" + SHOW)
+        if (options.signal) {
+          reject(new DOMException("Prompt aborted", "AbortError"))
+          return "stop"
+        }
         process.exit(130)
       }
     })

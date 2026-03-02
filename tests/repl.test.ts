@@ -157,6 +157,60 @@ describe("ReadlineOptions type", () => {
   })
 })
 
+// ── A2: readInput isTTY guard ─────────────────────────────
+
+describe("readInput isTTY guard", () => {
+  it("readline returns empty on non-TTY (does not throw)", async () => {
+    // In test environment, stdin is not a TTY — readline should
+    // use its non-TTY fallback and return without calling setRawMode
+    const result = await readline()
+    expect(typeof result).toBe("string")
+  })
+
+  it("readline returns default value on non-TTY", async () => {
+    const result = await readline({ default: "fallback" })
+    expect(result).toBe("fallback")
+  })
+})
+
+// ── C8: prompt evaluation consolidation ───────────────────
+
+describe("prompt evaluation fix", () => {
+  const replPath = import.meta.dir + "/../src/repl.ts"
+
+  it("repl.ts uses evalPrompt() for single evaluation", async () => {
+    const source = await Bun.file(replPath).text()
+    expect(source).toContain("evalPrompt()")
+  })
+
+  it("repl.ts does not have separate getPrompt/getPromptWidth functions", async () => {
+    const source = await Bun.file(replPath).text()
+    // Old pattern removed
+    expect(source).not.toContain("function getPrompt()")
+    expect(source).not.toContain("function getPromptWidth()")
+  })
+})
+
+// ── C4: SIGINT handler management ─────────────────────────
+
+describe("SIGINT handler accumulation fix", () => {
+  const replPath = import.meta.dir + "/../src/repl.ts"
+
+  it("repl.ts uses single activeSigInt handler pattern", async () => {
+    const source = await Bun.file(replPath).text()
+    expect(source).toContain("activeSigInt")
+    expect(source).toContain("installSigInt")
+    expect(source).toContain("removeSigInt")
+  })
+
+  it("repl.ts has exactly one process.on SIGINT call", async () => {
+    const source = await Bun.file(replPath).text()
+    const matches = source.match(/process\.on\("SIGINT"/g)
+    // Exactly 1: inside installSigInt
+    expect(matches?.length).toBe(1)
+  })
+})
+
 // ── simplified repl behavior ──────────────────────────────
 
 describe("simplified repl structure", () => {

@@ -1,7 +1,7 @@
 // prism/box - framed content sections
 // unicode box-drawing for structured CLI output
 
-import { termWidth } from "./writer"
+import { isTTY, termWidth } from "./writer"
 import { s } from "./style"
 
 // Box-drawing character sets
@@ -84,8 +84,8 @@ export function box(content: string, options: BoxOptions = {}): string {
     } else if (titleAlign === "right") {
       topLine = colorize(b.tl + b.h.repeat(Math.max(0, remainingWidth - 1))) + styledTitle + colorize(b.h + b.tr)
     } else {
-      const leftPad = Math.floor((remainingWidth - 1) / 2)
-      const rightPad = remainingWidth - 1 - leftPad
+      const leftPad = Math.floor(remainingWidth / 2)
+      const rightPad = remainingWidth - leftPad
       topLine = colorize(b.tl + b.h.repeat(Math.max(0, leftPad))) + styledTitle + colorize(b.h.repeat(Math.max(0, rightPad)) + b.tr)
     }
     result.push(topLine)
@@ -110,7 +110,7 @@ export function box(content: string, options: BoxOptions = {}): string {
 export function divider(char: string = "─", width?: number, color?: string): string {
   const w = width ?? termWidth()
   const line = char.repeat(w)
-  if (color) {
+  if (color && isTTY) {
     const ansi = Bun.color(color, "ansi") ?? ""
     return ansi + line + "\x1b[39m"
   }
