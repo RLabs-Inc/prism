@@ -1,7 +1,7 @@
 // prism/writer - pipe-aware output
 // detects TTY vs pipe and adapts automatically
 
-const isTTY = Bun.enableANSIColors
+const isTTY = Bun.enableANSIColors || process.env.FORCE_COLOR === "1"
 
 /** Write raw text to stdout - no newline, no formatting */
 export function write(text: string): void {
