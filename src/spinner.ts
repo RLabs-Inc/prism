@@ -7,12 +7,12 @@
 
 import { isTTY } from "./writer"
 import { s } from "./style"
+import { hideCursor, showCursor } from "./cursor"
+import { elapsed as createElapsed } from "./elapsed"
 
 // --- Terminal control sequences ---
 const CLR  = "\x1b[2K"      // erase entire line
 const CR   = "\r"            // carriage return
-const HIDE = "\x1b[?25l"    // hide cursor
-const SHOW = "\x1b[?25h"    // show cursor
 
 // --- Spinner catalog ---
 // { f: frames[], ms: interval }
@@ -137,13 +137,6 @@ export interface Spinner {
   stop(icon: string, msg: string, color?: (t: string) => string): void
 }
 
-// --- Safety: restore cursor if process exits mid-spin ---
-let activeCount = 0
-
-function onExit() {
-  if (activeCount > 0) process.stdout.write(SHOW)
-}
-
 // --- The spinner ---
 
 export function spinner(text: string, options: SpinnerOptions = {}): Spinner {
@@ -160,7 +153,7 @@ export function spinner(text: string, options: SpinnerOptions = {}): Spinner {
   let idx = 0
   let msg = text
   let stopped = false
-  const t0 = Date.now()
+  const timer_ = timer ? createElapsed() : null
 
   // --- Non-TTY: static text, no animation ---
   if (!isTTY) {
@@ -176,20 +169,16 @@ export function spinner(text: string, options: SpinnerOptions = {}): Spinner {
   }
 
   // --- TTY: animated ---
-  if (activeCount === 0) process.on("exit", onExit)
-  activeCount++
-  console.write(HIDE)
+  hideCursor()
 
-  function elapsed(): string {
-    if (!timer) return ""
-    const ms = Date.now() - t0
-    if (ms < 1000) return s.dim(` ${ms}ms`)
-    return s.dim(` ${(ms / 1000).toFixed(1)}s`)
+  function timerStr(): string {
+    if (!timer_) return ""
+    return s.dim(` ${timer_.render()}`)
   }
 
   function render() {
     const frame = colorFn(frames[idx % frames.length])
-    console.write(`${CR}${CLR}${frame} ${msg}${elapsed()}`)
+    console.write(`${CR}${CLR}${frame} ${msg}${timerStr()}`)
     idx++
   }
 
@@ -201,13 +190,9 @@ export function spinner(text: string, options: SpinnerOptions = {}): Spinner {
     stopped = true
     clearInterval(handle)
     try {
-      console.write(`${CR}${CLR}${iconColor(icon)} ${finalMsg}${elapsed()}\n`)
+      console.write(`${CR}${CLR}${iconColor(icon)} ${finalMsg}${timerStr()}\n`)
     } finally {
-      activeCount--
-      if (activeCount === 0) {
-        process.removeListener("exit", onExit)
-      }
-      console.write(SHOW)
+      showCursor()
     }
   }
 

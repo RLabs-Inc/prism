@@ -4,12 +4,12 @@
 
 import { isTTY, termWidth } from "./writer"
 import { s } from "./style"
+import { hideCursor, showCursor } from "./cursor"
+import { elapsed as createElapsed } from "./elapsed"
 
 // --- Terminal control ---
 const CR   = "\r"
 const CLR  = "\x1b[2K"
-const HIDE = "\x1b[?25l"
-const SHOW = "\x1b[?25h"
 
 // --- Bar styles ---
 
@@ -61,13 +61,6 @@ export interface ProgressBar {
   fail(msg?: string): void
 }
 
-// --- Safety: restore cursor ---
-let activeCount = 0
-
-function onExit() {
-  if (activeCount > 0) process.stdout.write(SHOW)
-}
-
 // --- The progress bar ---
 
 export function progress(text: string, options: ProgressOptions = {}): ProgressBar {
@@ -84,7 +77,7 @@ export function progress(text: string, options: ProgressOptions = {}): ProgressB
   let total = initialTotal
   let current = 0
   let stopped = false
-  const t0 = Date.now()
+  const timer = createElapsed()
   const bs = barStyles[style] ?? barStyles.bar
 
   // --- Non-TTY: silent until completion ---
@@ -96,9 +89,7 @@ export function progress(text: string, options: ProgressOptions = {}): ProgressB
     }
   }
 
-  if (activeCount === 0) process.on("exit", onExit)
-  activeCount++
-  console.write(HIDE)
+  hideCursor()
 
   function render() {
     const pct = Math.min(1, Math.max(0, current / total))
@@ -136,8 +127,8 @@ export function progress(text: string, options: ProgressOptions = {}): ProgressB
     if (showPercent) parts.push(s.bold(`${Math.round(pct * 100)}%`))
     if (showCount) parts.push(s.dim(`${current}/${total}`))
     if (showETA && current > 0 && pct < 1) {
-      const elapsed = (Date.now() - t0) / 1000
-      const rate = current / elapsed
+      const elapsedSec = timer.ms / 1000
+      const rate = current / elapsedSec
       const remaining = Math.max(0, (total - current) / rate)
       if (remaining < 60) parts.push(s.dim(`~${remaining.toFixed(0)}s`))
       else parts.push(s.dim(`~${(remaining / 60).toFixed(1)}m`))
@@ -152,12 +143,9 @@ export function progress(text: string, options: ProgressOptions = {}): ProgressB
     if (stopped) return
     stopped = true
     try {
-      const elapsed = s.dim(`${((Date.now() - t0) / 1000).toFixed(1)}s`)
-      console.write(`${CR}${CLR}${iconColor(icon)} ${msg} ${elapsed}\n`)
+      console.write(`${CR}${CLR}${iconColor(icon)} ${msg} ${s.dim(timer.render())}\n`)
     } finally {
-      activeCount--
-      if (activeCount === 0) process.removeListener("exit", onExit)
-      console.write(SHOW)
+      showCursor()
     }
   }
 

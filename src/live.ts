@@ -1,11 +1,10 @@
-// prism/live - live terminal components
-// animate, update, freeze into the scrollback
+// prism/live - live terminal components (convenience wrappers)
+// compose activityLine/sectionBlock + terminal I/O for standalone use
 //
 // activity() - single-line: icon + text + timer + metrics
 // section()  - multi-line: title spinner + collapsible items
 //
 // lifecycle: create → animate/update → done/fail → frozen in scrollback
-// once frozen, output becomes static text and next component starts below
 //
 // footer support: when a footer is provided (e.g., the repl frame),
 // live components render their content ABOVE the footer and redraw
@@ -13,17 +12,13 @@
 // scrollback and footer.onEnd() is called to let the owner redraw.
 
 import { s } from "./style"
-import { isTTY } from "./writer"
-import { spinners, type SpinnerStyle } from "./spinner"
-
-// ── Terminal control ──────────────────────────────────────
-
-const HIDE = "\x1b[?25l"
-const SHOW = "\x1b[?25h"
+import { isTTY, visualRows } from "./writer"
+import { type SpinnerStyle } from "./spinner"
+import { hideCursor, showCursor } from "./cursor"
+import { activityLine as createActivityLine } from "./activity-line"
+import { sectionBlock as createSectionBlock } from "./section-block"
 
 // ── Footer config ────────────────────────────────────────
-// allows live components to render a persistent footer (like the repl frame)
-// below their content, redrawing it on every animation tick
 
 export interface FooterConfig {
   /** Return lines to render below the live content */
@@ -32,104 +27,49 @@ export interface FooterConfig {
   onEnd: () => void
 }
 
-// ── Cursor management ─────────────────────────────────────
-
-let activeCount = 0
-
-function onExit() {
-  if (activeCount > 0) process.stdout.write(SHOW)
-}
-
-function activate() {
-  if (activeCount === 0) process.on("exit", onExit)
-  activeCount++
-  console.write(HIDE)
-}
-
-function deactivate() {
-  activeCount--
-  if (activeCount === 0) process.removeListener("exit", onExit)
-  console.write(SHOW)
-}
-
-// ── Block renderer ────────────────────────────────────────
+// ── Block renderer (internal) ────────────────────────────
 // manages a multi-line region that updates in-place
-// tracks height to move cursor correctly on re-render
-//
-// with footer: renders footer below content, cursor stays at
-// "one line after last content line" (same invariant as without footer)
-
-/** Calculate visual rows a line occupies (accounting for terminal wrapping) */
-function visualRows(line: string): number {
-  const width = process.stdout.columns || 80
-  const w = Bun.stringWidth(Bun.stripANSI(line))
-  if (w === 0) return 1
-  return Math.ceil(w / width)
-}
+// with footer: renders footer below content, cursor stays above footer
 
 function createBlock(footer?: FooterConfig) {
   let prevHeight = 0
 
   return {
     render(lines: string[]) {
-      // move up to start of previous content
       if (prevHeight > 0) console.write(`\x1b[${prevHeight}A`)
-
-      // clear everything from content start to end of screen
       console.write("\r\x1b[J")
 
-      // write content lines
       for (const line of lines) {
         console.write(`${line}\n`)
       }
 
-      // write footer if present
       if (footer) {
         const footerLines = footer.render()
         for (const line of footerLines) {
           console.write(`${line}\n`)
         }
-        // move cursor back above footer — use visual rows for footer too
         if (footerLines.length > 0) {
           const footerVisualRows = footerLines.reduce((sum, l) => sum + visualRows(l), 0)
           console.write(`\x1b[${footerVisualRows}A`)
         }
       }
 
-      // track visual rows, not logical lines
       prevHeight = lines.reduce((sum, l) => sum + visualRows(l), 0)
     },
 
-    /** Render final frozen content and notify footer owner */
     freeze(lines: string[]) {
-      // move up to start of previous content
       if (prevHeight > 0) console.write(`\x1b[${prevHeight}A`)
-
-      // clear everything
       console.write("\r\x1b[J")
 
-      // write frozen content (becomes scrollback)
       for (const line of lines) {
         console.write(`${line}\n`)
       }
 
-      // notify footer owner to redraw
       if (footer) footer.onEnd()
     },
 
     get height() { return prevHeight },
   }
-}
-
-// ── Elapsed time ──────────────────────────────────────────
-
-function elapsed(t0: number): string {
-  const ms = Date.now() - t0
-  if (ms < 1000) return `${ms}ms`
-  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`
-  const m = Math.floor(ms / 60_000)
-  const sec = Math.floor((ms % 60_000) / 1000)
-  return `${m}m ${sec}s`
 }
 
 // ── Activity ──────────────────────────────────────────────
@@ -164,12 +104,6 @@ export interface Activity {
   stop(icon: string, msg: string, color?: (t: string) => string): void
 }
 
-/**
- * Single-line live status with animated icon, timer, and metrics.
- *
- * Like spinner, but with right-side metrics that update on each tick:
- *   ✽ Unfurling… (9m 45s · ↓ 11.6k tokens)
- */
 export function activity(text: string, options: ActivityOptions = {}): Activity {
   const {
     icon,
@@ -182,26 +116,12 @@ export function activity(text: string, options: ActivityOptions = {}): Activity 
 
   const ttyMode = ttyOverride ?? isTTY
 
-  // resolve icon to spinner frames or static string
-  const isSpinnerName = typeof icon === "string" && icon in spinners
-  const spinnerDef = isSpinnerName
-    ? spinners[icon as SpinnerStyle]
-    : icon === undefined
-      ? spinners.dots
-      : null
-  const frames = spinnerDef?.f ?? [icon as string]
-  const interval = spinnerDef?.ms ?? 80
-
-  let idx = 0
-  let msg = text
-  let stopped = false
-  const t0 = Date.now()
-
   // non-TTY: static output
   if (!ttyMode) {
+    let msg = text
     console.write(text + "\n")
     return {
-      text(m) { console.write(m + "\n") },
+      text(m) { msg = m; console.write(m + "\n") },
       done(m) { console.write(`✓ ${m ?? msg}\n`) },
       fail(m) { console.write(`✗ ${m ?? msg}\n`) },
       warn(m) { console.write(`⚠ ${m ?? msg}\n`) },
@@ -210,67 +130,50 @@ export function activity(text: string, options: ActivityOptions = {}): Activity 
     }
   }
 
-  activate()
-
-  // use block renderer when we have a footer (need multi-line management)
+  // TTY: compose activityLine state machine + terminal I/O
+  const act = createActivityLine(text, { icon, timer, color: colorFn, metrics })
   const block = footerConfig ? createBlock(footerConfig) : null
+  let stopped = false
 
-  function buildLine(): string {
-    const frame = colorFn(frames[idx % frames.length])
-    const meta: string[] = []
-    if (timer) meta.push(elapsed(t0))
-    if (metrics) meta.push(metrics())
-    const metaStr = meta.length > 0 ? s.dim(` (${meta.join(" · ")})`) : ""
-    return `${frame} ${msg}${metaStr}`
-  }
-
-  function buildFinalLine(endIcon: string, finalMsg: string, iconColor: (t: string) => string): string {
-    const meta: string[] = []
-    if (timer) meta.push(elapsed(t0))
-    const metaStr = meta.length > 0 ? s.dim(` (${meta.join(" · ")})`) : ""
-    return `${iconColor(endIcon)} ${finalMsg}${metaStr}`
-  }
+  hideCursor()
 
   function render() {
     if (stopped) return
-
+    const lines = act.render()
     if (block) {
-      // footer mode: use block renderer for content + footer coordination
-      block.render([buildLine()])
+      block.render(lines)
     } else {
-      // classic single-line mode: CR + CLR + content (no newline)
-      console.write(`\r\x1b[2K${buildLine()}`)
+      console.write(`\r\x1b[2K${lines[0]}`)
     }
-    idx++
   }
 
   render()
-  const handle = setInterval(render, interval)
+  act.start(() => render())
 
-  function end(endIcon: string, finalMsg: string, iconColor: (t: string) => string) {
+  function end(endIcon: string, newMsg: string | undefined, iconColor: (t: string) => string) {
     if (stopped) return
     stopped = true
-    clearInterval(handle)
+    act.stop()
 
     try {
+      if (newMsg) act.text(newMsg)
+      const frozen = act.freeze(endIcon, iconColor)
       if (block) {
-        // footer mode: freeze content and let footer owner redraw
-        block.freeze([buildFinalLine(endIcon, finalMsg, iconColor)])
+        block.freeze(frozen)
       } else {
-        // classic mode: overwrite line with final state
-        console.write(`\r\x1b[2K${buildFinalLine(endIcon, finalMsg, iconColor)}\n`)
+        console.write(`\r\x1b[2K${frozen[0]}\n`)
       }
     } finally {
-      deactivate()
+      showCursor()
     }
   }
 
   return {
-    text(m) { msg = m },
-    done(m) { end("✓", m ?? msg, s.green) },
-    fail(m) { end("✗", m ?? msg, s.red) },
-    warn(m) { end("⚠", m ?? msg, s.yellow) },
-    info(m) { end("ℹ", m ?? msg, s.blue) },
+    text(m) { act.text(m) },
+    done(m) { end("✓", m, s.green) },
+    fail(m) { end("✗", m, s.red) },
+    warn(m) { end("⚠", m, s.yellow) },
+    info(m) { end("ℹ", m, s.blue) },
     stop(ic, m, color) { end(ic, m, color ?? s.white) },
   }
 }
@@ -311,17 +214,6 @@ export interface Section {
   stop(icon: string, msg: string, color?: (t: string) => string): void
 }
 
-/**
- * Multi-line live block: animated title + collapsible items.
- *
- * Perfect for showing tool/action progress with file lists:
- *   ⠋ Reading 2 files…
- *   ⎿  src/box.ts
- *   ⎿  src/style.ts
- *
- * Items can be added incrementally. On done(), the spinner
- * freezes to ✓ and the block becomes static scrollback.
- */
 export function section(title: string, options: SectionOptions = {}): Section {
   const {
     spinner: spinnerStyle = "dots",
@@ -350,80 +242,46 @@ export function section(title: string, options: SectionOptions = {}): Section {
     }
   }
 
-  const def = spinners[spinnerStyle] ?? spinners.dots
-  const frames = def.f
-  const interval = def.ms
-
-  let idx = 0
-  let msg = title
-  let items: string[] = []
-  let stopped = false
-  const t0 = Date.now()
-  const pad = " ".repeat(indent)
+  // TTY: compose sectionBlock state machine + terminal I/O
+  const sec = createSectionBlock(title, {
+    spinner: spinnerStyle,
+    color: colorFn,
+    indent,
+    connector,
+    timer,
+    collapseOnDone,
+  })
   const block = createBlock(footerConfig)
+  let stopped = false
 
-  activate()
-
-  function timerStr(): string {
-    if (!timer) return ""
-    return s.dim(` ${elapsed(t0)}`)
-  }
-
-  function buildLines(finalIcon?: string, iconColor?: (t: string) => string): string[] {
-    const lines: string[] = []
-
-    // title line
-    const icon = finalIcon
-      ? (iconColor ?? s.white)(finalIcon)
-      : colorFn(frames[idx % frames.length])
-    lines.push(`${pad}${icon} ${msg}${timerStr()}`)
-
-    // item lines
-    for (const item of items) {
-      lines.push(`${pad}${s.dim(connector)}  ${item}`)
-    }
-
-    return lines
-  }
+  hideCursor()
 
   function render() {
     if (stopped) return
-    block.render(buildLines())
-    idx++
+    block.render(sec.render())
   }
 
   render()
-  const handle = setInterval(render, interval)
+  sec.start(() => render())
 
-  function end(icon: string, finalMsg: string, iconColor: (t: string) => string) {
+  function end(icon: string, newMsg: string | undefined, iconColor: (t: string) => string) {
     if (stopped) return
     stopped = true
-    clearInterval(handle)
+    sec.stop()
 
     try {
-      msg = finalMsg
-      const lines: string[] = []
-      lines.push(`${pad}${iconColor(icon)} ${finalMsg}${timerStr()}`)
-
-      if (!collapseOnDone) {
-        for (const item of items) {
-          lines.push(`${pad}${s.dim(connector)}  ${item}`)
-        }
-      }
-
-      // freeze content and let footer owner redraw
-      block.freeze(lines)
+      block.freeze(sec.freeze(icon, newMsg, iconColor))
     } finally {
-      deactivate()
+      showCursor()
     }
   }
 
   return {
-    title(m) { msg = m },
-    add(line) { items.push(line); render() },
-    body(content) { items = content.split("\n"); render() },
-    done(m) { end("✓", m ?? msg, s.green) },
-    fail(m) { end("✗", m ?? msg, s.red) },
+    title(m) { sec.title(m) },
+    add(line) { sec.add(line); render() },
+    body(content) { sec.body(content); render() },
+    done(m) { end("✓", m, s.green) },
+    fail(m) { end("✗", m, s.red) },
     stop(icon, m, color) { end(icon, m, color ?? s.white) },
   }
 }
