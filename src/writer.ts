@@ -28,5 +28,13 @@ export function termWidth(): number {
   return process.stdout.columns ?? 80
 }
 
+/** Calculate visual rows a line occupies (accounting for terminal wrapping) */
+export function visualRows(line: string, width?: number): number {
+  const w = Bun.stringWidth(Bun.stripANSI(line))
+  if (w === 0) return 1
+  const cols = width ?? process.stdout.columns ?? 80
+  return Math.ceil(w / cols)
+}
+
 /** Whether we're outputting to a real terminal */
 export { isTTY }
