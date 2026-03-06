@@ -32,7 +32,7 @@ export function termWidth(): number {
 export function visualRows(line: string, width?: number): number {
   const w = Bun.stringWidth(Bun.stripANSI(line))
   if (w === 0) return 1
-  const cols = width ?? process.stdout.columns ?? 80
+  const cols = width || process.stdout.columns || 80
   return Math.ceil(w / cols)
 }
 

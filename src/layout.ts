@@ -9,7 +9,7 @@
 // live components use the active zone as their footer via createFooter()
 // when a live component freezes, footer.onEnd() redraws the active zone
 
-import { isTTY } from "./writer"
+import { isTTY, visualRows } from "./writer"
 import { activity as liveActivity, section as liveSection, type ActivityOptions, type Activity, type SectionOptions, type Section, type FooterConfig } from "./live"
 import { stream as createStream, type StreamOptions, type Stream } from "./stream"
 
@@ -124,14 +124,6 @@ export function layout(options?: LayoutOptions): Layout {
     console.write("\r\x1b[J")
   }
 
-  /** Calculate visual rows a line occupies (accounting for terminal wrapping) */
-  function visualRows(line: string): number {
-    const width = process.stdout.columns || 80
-    const w = Bun.stringWidth(Bun.stripANSI(line))
-    if (w === 0) return 1
-    return Math.ceil(w / width)
-  }
-
   /** Render active zone lines and position cursor */
   function drawActive() {
     if (!renderFn) return
@@ -143,7 +135,7 @@ export function layout(options?: LayoutOptions): Layout {
     }
 
     // Count visual rows (not logical lines) for correct erase
-    const rowsPerLine = lines.map(visualRows)
+    const rowsPerLine = lines.map((l) => visualRows(l))
     const totalVisualRows = rowsPerLine.reduce((sum, r) => sum + r, 0)
     prevHeight = totalVisualRows
 
