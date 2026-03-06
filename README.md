@@ -50,6 +50,8 @@ bun demo           # original demo
 | [`repl`](#repl) | interactive | Readline and REPL loop with slash commands |
 | [`live`](#live) | interactive | Activity spinners, multi-line sections |
 | [`statusbar`](#statusbar) | interactive | Left/right aligned terminal status line |
+| [`diff`](#diff) | display | Line-level diff with red/green coloring |
+| [`file-preview`](#file-preview) | display | Syntax-highlighted code block with border |
 
 ---
 
@@ -1753,6 +1755,132 @@ str.write("chunk2\n")    // → "uploading: chunk2"
 
 ---
 
+## diff
+
+Line-level diff display for the terminal. Pure function — string in, string out.
+
+```ts
+import { diff } from "@rlabs-inc/prism"
+// or: import { diff } from "@rlabs-inc/prism/diff"
+```
+
+### Basic diff
+
+```ts
+const old = `function hello() {
+  console.log("hello")
+}`
+
+const updated = `function hello() {
+  console.log("hello, world!")
+  return true
+}`
+
+console.log(diff(old, updated))
+// Red:   - console.log("hello")
+// Green: + console.log("hello, world!")
+// Green: + return true
+```
+
+### With filename header
+
+```ts
+diff(old, updated, { filename: "src/greet.ts" })
+// === src/greet.ts ===
+// (diff lines follow)
+```
+
+### Context lines
+
+```ts
+// Show 5 lines of context around changes (default: 3)
+diff(old, updated, { context: 5 })
+```
+
+### API
+
+```ts
+diff(oldText: string, newText: string, options?: DiffOptions): string
+
+interface DiffOptions {
+  filename?: string   // header label
+  context?: number    // context lines around changes (default: 3)
+}
+```
+
+- Uses LCS algorithm for accurate line matching
+- Red (`-`) for removed, green (`+`) for added, dim for context
+- Gap separators (`...`) for skipped unchanged regions
+- Line numbers on both sides (old and new)
+- Degrades to plain `+`/`-`/` ` markers in non-TTY (piped output)
+- Returns `"(no changes)"` for identical inputs
+
+---
+
+## file-preview
+
+Syntax-highlighted code block with filename header, line numbers, and bordered box. Composes `highlight()` + `box()`.
+
+```ts
+import { filePreview } from "@rlabs-inc/prism"
+// or: import { filePreview } from "@rlabs-inc/prism/file-preview"
+```
+
+### Basic preview
+
+```ts
+const code = `const x = 42
+console.log(x)`
+
+console.log(filePreview(code))
+// ╭──────────────────╮
+// │  1 │ const x = 42 │
+// │  2 │ console.log(x)│
+// ╰──────────────────╯
+```
+
+### With filename and language
+
+```ts
+filePreview(code, {
+  filename: "src/main.ts",
+  language: "typescript",
+})
+// ╭─ src/main.ts ────╮
+// │  1 │ const x = 42 │
+// │  2 │ console.log(x)│
+// ╰──────────────────╯
+```
+
+### Starting from a specific line
+
+```ts
+filePreview(code, { startLine: 42 })
+// Line numbers start at 42 instead of 1
+```
+
+### API
+
+```ts
+filePreview(content: string, options?: FilePreviewOptions): string
+
+interface FilePreviewOptions {
+  filename?: string        // title in box header
+  language?: "typescript" | "javascript" | "json" | "bash" |
+             "sql" | "graphql" | "rust" | "auto"  // default: "auto"
+  lineNumbers?: boolean    // default: true
+  startLine?: number       // default: 1
+  border?: BorderStyle     // default: "rounded"
+}
+```
+
+- Delegates to `highlight()` for syntax coloring (7 languages + auto-detect)
+- Delegates to `box()` for bordered frame with title
+- Pure function — no I/O, no state
+- Respects ANSI 16 theme colors
+
+---
+
 ## Bun APIs We Build On
 
 Every heavy operation delegates to Bun's Zig/SIMD-optimized internals:
@@ -1810,7 +1938,13 @@ prism/
 │   ├── args.ts         # declarative CLI argument parsing
 │   ├── repl.ts         # readline, REPL loop, frame system, Stage
 │   ├── live.ts         # activity spinners, multi-line sections
-│   └── statusbar.ts    # left/right aligned status line
+│   ├── statusbar.ts    # left/right aligned status line
+│   ├── layout.ts       # two-zone terminal manager
+│   ├── stream.ts       # buffered streaming text
+│   ├── exec.ts         # command output viewer
+│   ├── line-editor.ts  # stateless line editing
+│   ├── diff.ts         # line-level diff display
+│   └── file-preview.ts # syntax-highlighted code preview
 ├── demo.ts             # original demo (style, box, table, markdown)
 ├── demo-spinner.ts     # spinner catalog and showcase
 ├── demo-all.ts         # full demo of every module

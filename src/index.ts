@@ -73,3 +73,9 @@ export { lineEditor, type LineEditor, type LineEditorOptions, type LineEditorSta
 
 // Exec — controlled live command output viewer
 export { exec, type Exec, type ExecOptions } from "./exec"
+
+// Diff — line-level diff display
+export { diff, type DiffOptions } from "./diff"
+
+// File Preview — syntax-highlighted code block with border
+export { filePreview, type FilePreviewOptions } from "./file-preview"
