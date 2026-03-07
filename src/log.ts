@@ -3,9 +3,9 @@
 // consistent visual language across all prism-based tools
 
 import { s } from "./style"
-import { isTTY } from "./writer"
+import { ansiEnabled } from "./writer"
 
-interface LogOptions {
+export interface LogOptions {
   timestamp?: boolean
   prefix?: string
 }
@@ -22,7 +22,7 @@ function fmt(icon: string, colorFn: (t: string) => string, msg: string, opts?: L
   const parts: string[] = []
   if (opts?.timestamp) parts.push(ts())
   if (opts?.prefix) parts.push(s.dim(`[${opts.prefix}]`))
-  parts.push(isTTY ? colorFn(icon) : icon)
+  parts.push(ansiEnabled ? colorFn(icon) : icon)
   parts.push(msg)
   console.write(parts.join(" ") + "\n")
 }

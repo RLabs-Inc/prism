@@ -257,6 +257,100 @@ describe("deleteWord", () => {
   })
 })
 
+// ── clearBefore / clearAfter ────────────────────────────
+
+describe("clearBefore", () => {
+  test("clears text before cursor", () => {
+    const ed = lineEditor()
+    ed.insertChar("hello world")
+    // cursor at 11, move to position 6
+    ed.home()
+    for (let i = 0; i < 6; i++) ed.cursorRight()
+    ed.clearBefore()
+    expect(ed.buffer).toBe("world")
+    expect(ed.cursor).toBe(0)
+  })
+
+  test("no-op at position 0", () => {
+    const ed = lineEditor()
+    ed.insertChar("hello")
+    ed.home()
+    ed.clearBefore()
+    expect(ed.buffer).toBe("hello")
+    expect(ed.cursor).toBe(0)
+  })
+
+  test("clears everything when cursor at end", () => {
+    const ed = lineEditor()
+    ed.insertChar("hello")
+    ed.clearBefore()
+    expect(ed.buffer).toBe("")
+    expect(ed.cursor).toBe(0)
+  })
+})
+
+describe("clearAfter", () => {
+  test("clears text after cursor", () => {
+    const ed = lineEditor()
+    ed.insertChar("hello world")
+    ed.home()
+    for (let i = 0; i < 5; i++) ed.cursorRight()
+    ed.clearAfter()
+    expect(ed.buffer).toBe("hello")
+    expect(ed.cursor).toBe(5)
+  })
+
+  test("no-op at end of buffer", () => {
+    const ed = lineEditor()
+    ed.insertChar("hello")
+    ed.clearAfter()
+    expect(ed.buffer).toBe("hello")
+    expect(ed.cursor).toBe(5)
+  })
+
+  test("clears everything when cursor at start", () => {
+    const ed = lineEditor()
+    ed.insertChar("hello")
+    ed.home()
+    ed.clearAfter()
+    expect(ed.buffer).toBe("")
+    expect(ed.cursor).toBe(0)
+  })
+})
+
+// ── setValue ────────────────────────────────────────────
+
+describe("setValue", () => {
+  test("sets buffer and cursor to end", () => {
+    const ed = lineEditor()
+    ed.setValue("hello world")
+    expect(ed.buffer).toBe("hello world")
+    expect(ed.cursor).toBe(11)
+  })
+
+  test("sets buffer and cursor to specific position", () => {
+    const ed = lineEditor()
+    ed.setValue("hello world", 5)
+    expect(ed.buffer).toBe("hello world")
+    expect(ed.cursor).toBe(5)
+  })
+
+  test("overwrites existing content", () => {
+    const ed = lineEditor()
+    ed.insertChar("old")
+    ed.setValue("new text", 3)
+    expect(ed.buffer).toBe("new text")
+    expect(ed.cursor).toBe(3)
+  })
+
+  test("fires onRender callback", () => {
+    let count = 0
+    const ed = lineEditor({ onRender: () => { count++ } })
+    ed.setValue("test")
+    expect(count).toBe(1)
+  })
+})
+
 // ── clearLine ───────────────────────────────────────────
 
 describe("clearLine", () => {

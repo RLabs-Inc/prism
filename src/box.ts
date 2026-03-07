@@ -1,8 +1,9 @@
 // prism/box - framed content sections
 // unicode box-drawing for structured CLI output
 
-import { isTTY, termWidth } from "./writer"
+import { ansiEnabled, termWidth } from "./writer"
 import { s } from "./style"
+import { truncate } from "./text"
 
 // Box-drawing character sets
 export const borders = {
@@ -34,7 +35,7 @@ export const borders = {
 
 export type BorderStyle = keyof typeof borders
 
-interface BoxOptions {
+export interface BoxOptions {
   border?: BorderStyle
   width?: number
   padding?: number
@@ -55,15 +56,12 @@ export function box(content: string, options: BoxOptions = {}): string {
   } = options
 
   const b = borders[border]
-  const maxWidth = options.width ?? termWidth()
+  const maxWidth = Math.max(2 + (padding * 2) + 1, options.width ?? termWidth())
   const innerWidth = maxWidth - 2 - (padding * 2) // 2 for borders, padding each side
   const pad = " ".repeat(padding)
 
   const colorize = borderColor
-    ? (char: string) => {
-        const ansi = Bun.color(borderColor, "ansi") ?? ""
-        return ansi + char + "\x1b[39m"
-      }
+    ? (char: string) => s.fg(borderColor)(char)
     : (char: string) => char
 
   // Wrap content to inner width
@@ -74,15 +72,21 @@ export function box(content: string, options: BoxOptions = {}): string {
 
   // Top border with optional title
   if (title) {
-    const styledTitle = titleColor(` ${title} `)
-    const titleDisplayWidth = Bun.stringWidth(` ${title} `)
+    const maxTitleWidth = Math.max(0, maxWidth - 4)
+    const safeTitle = truncate(title, maxTitleWidth)
+    const styledTitle = titleColor(` ${safeTitle} `)
+    const titleDisplayWidth = Bun.stringWidth(` ${safeTitle} `)
     const remainingWidth = maxWidth - 2 - titleDisplayWidth // -2 for corners
 
     let topLine: string
     if (titleAlign === "left") {
-      topLine = colorize(b.tl + b.h) + styledTitle + colorize(b.h.repeat(Math.max(0, remainingWidth - 1)) + b.tr)
+      const leftFill = Math.min(1, Math.max(0, remainingWidth))
+      const rightFill = Math.max(0, remainingWidth - leftFill)
+      topLine = colorize(b.tl + b.h.repeat(leftFill)) + styledTitle + colorize(b.h.repeat(rightFill) + b.tr)
     } else if (titleAlign === "right") {
-      topLine = colorize(b.tl + b.h.repeat(Math.max(0, remainingWidth - 1))) + styledTitle + colorize(b.h + b.tr)
+      const rightFill = Math.min(1, Math.max(0, remainingWidth))
+      const leftFill = Math.max(0, remainingWidth - rightFill)
+      topLine = colorize(b.tl + b.h.repeat(leftFill)) + styledTitle + colorize(b.h.repeat(rightFill) + b.tr)
     } else {
       const leftPad = Math.floor(remainingWidth / 2)
       const rightPad = remainingWidth - leftPad
@@ -110,9 +114,8 @@ export function box(content: string, options: BoxOptions = {}): string {
 export function divider(char: string = "─", width?: number, color?: string): string {
   const w = width ?? termWidth()
   const line = char.repeat(w)
-  if (color && isTTY) {
-    const ansi = Bun.color(color, "ansi") ?? ""
-    return ansi + line + "\x1b[39m"
+  if (color && ansiEnabled) {
+    return s.fg(color)(line)
   }
   return line
 }
@@ -122,7 +125,8 @@ export function header(text: string, options: { char?: string; color?: (t: strin
   const { char = "─", color: colorFn = s.bold } = options
   const textWidth = Bun.stringWidth(text)
   const totalWidth = termWidth()
-  const sideWidth = Math.max(0, Math.floor((totalWidth - textWidth - 4) / 2)) // 4 = 2 spaces + 2 padding
-  const side = char.repeat(sideWidth)
-  return `${side} ${colorFn(text)} ${side}`
+  const remaining = Math.max(0, totalWidth - textWidth - 2)
+  const leftWidth = Math.floor(remaining / 2)
+  const rightWidth = remaining - leftWidth
+  return `${char.repeat(leftWidth)} ${colorFn(text)} ${char.repeat(rightWidth)}`
 }

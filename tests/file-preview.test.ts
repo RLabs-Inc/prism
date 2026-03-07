@@ -37,3 +37,48 @@ describe("filePreview: line numbers", () => {
     expect(result).toContain("only content")
   })
 })
+
+describe("filePreview: language option", () => {
+  test("language option passes through to highlight", () => {
+    // TypeScript keywords should get highlighted when language is specified
+    const result = filePreview("const x = 1", { language: "typescript" })
+    // Should still contain the content
+    expect(strip(result)).toContain("const x = 1")
+    // Should have box borders
+    expect(strip(result)).toContain("╭")
+  })
+
+  test("auto language detection works", () => {
+    const result = filePreview("SELECT * FROM users", { language: "auto" })
+    expect(strip(result)).toContain("SELECT * FROM users")
+  })
+})
+
+describe("filePreview: empty content", () => {
+  test("handles empty string", () => {
+    const result = strip(filePreview(""))
+    // Should still render a box even with empty content
+    expect(result).toContain("╭")
+    expect(result).toContain("╰")
+  })
+})
+
+describe("filePreview: border option", () => {
+  test("single border style uses single box chars", () => {
+    const result = strip(filePreview("hello", { border: "single" }))
+    expect(result).toContain("┌")
+    expect(result).toContain("└")
+  })
+
+  test("double border style uses double box chars", () => {
+    const result = strip(filePreview("hello", { border: "double" }))
+    expect(result).toContain("╔")
+    expect(result).toContain("╚")
+  })
+
+  test("heavy border style uses heavy box chars", () => {
+    const result = strip(filePreview("hello", { border: "heavy" }))
+    expect(result).toContain("┏")
+    expect(result).toContain("┗")
+  })
+})

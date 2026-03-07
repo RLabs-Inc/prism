@@ -3,11 +3,11 @@
 // three variants: bracket (default), dot prefix, pill (bg color)
 
 import { s } from "./style"
-import { isTTY } from "./writer"
+import { ansiEnabled } from "./writer"
 
-type BadgeVariant = "bracket" | "dot" | "pill"
+export type BadgeVariant = "bracket" | "dot" | "pill"
 
-interface BadgeOptions {
+export interface BadgeOptions {
   color?: (t: string) => string
   variant?: BadgeVariant
 }
@@ -15,7 +15,7 @@ interface BadgeOptions {
 export function badge(text: string, options: BadgeOptions = {}): string {
   const { color: colorFn = s.white, variant = "bracket" } = options
 
-  if (!isTTY) return variant === "dot" ? `* ${text}` : `[${text}]`
+  if (!ansiEnabled) return variant === "dot" ? `* ${text}` : `[${text}]`
 
   switch (variant) {
     case "bracket": return s.dim("[") + colorFn(text) + s.dim("]")

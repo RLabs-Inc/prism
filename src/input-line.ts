@@ -20,7 +20,10 @@ export interface InputLine {
   wordLeft(): void
   wordRight(): void
   deleteWord(): void
+  clearBefore(): void
+  clearAfter(): void
   clearLine(): void
+  setValue(text: string, pos?: number): void
   submit(): string
   historyUp(): void
   historyDown(): void
@@ -43,6 +46,8 @@ export interface InputLineOptions {
   promptColor?: (t: string) => string
   /** Shared history array (mutated on submit) */
   history?: string[]
+  /** Max history entries when mutating shared history */
+  historySize?: number
   /** Mask character for sensitive input (e.g., "●") */
   mask?: string
 }
@@ -52,6 +57,7 @@ export function inputLine(options: InputLineOptions = {}): InputLine {
     prompt: promptOpt = "> ",
     promptColor = s.cyan,
     history,
+    historySize,
     mask,
   } = options
 
@@ -74,8 +80,20 @@ export function inputLine(options: InputLineOptions = {}): InputLine {
     wordLeft() { ed.wordLeft() },
     wordRight() { ed.wordRight() },
     deleteWord() { ed.deleteWord() },
+    clearBefore() { ed.clearBefore() },
+    clearAfter() { ed.clearAfter() },
     clearLine() { ed.clearLine() },
-    submit() { return ed.submit() },
+    setValue(text, pos?) { ed.setValue(text, pos) },
+    submit() {
+      const line = ed.submit()
+      if (history && line.trim() && history[0] !== line) {
+        history.unshift(line)
+        if (historySize !== undefined && history.length > historySize) {
+          history.length = historySize
+        }
+      }
+      return line
+    },
     historyUp() { ed.historyUp() },
     historyDown() { ed.historyDown() },
 

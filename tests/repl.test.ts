@@ -1,6 +1,6 @@
-// tests for simplified repl — verifies cleanup of frame/stage/steering
-import { describe, expect, it } from "bun:test"
-import { readline, repl } from "../src/repl"
+// tests for repl — verifies composable primitive architecture + behavioral tests
+import { describe, expect, it, test, beforeEach, afterEach } from "bun:test"
+import { readline, repl, wordAtCursor, commonPrefix } from "../src/repl"
 import type { CommandDef, ReplOptions, ReadlineOptions } from "../src/repl"
 
 // ── export verification ───────────────────────────────────
@@ -42,13 +42,11 @@ describe("CommandDef type", () => {
     const cmd: CommandDef = {
       description: "test command",
       handler: (args: string, signal: AbortSignal) => {
-        // handler should work with just args and signal
         expect(typeof args).toBe("string")
         expect(signal).toBeInstanceOf(AbortSignal)
       },
     }
     expect(cmd.handler).toBeDefined()
-    // call handler to verify it works
     cmd.handler("test", new AbortController().signal)
   })
 
@@ -90,7 +88,6 @@ describe("ReplOptions type", () => {
     const opts: ReplOptions = {
       onInput: () => {},
     }
-    // frame and onSteer should not be valid keys
     expect("frame" in opts).toBe(false)
     expect("onSteer" in opts).toBe(false)
   })
@@ -157,12 +154,10 @@ describe("ReadlineOptions type", () => {
   })
 })
 
-// ── A2: readInput isTTY guard ─────────────────────────────
+// ── readInput isTTY guard ─────────────────────────────────
 
 describe("readInput isTTY guard", () => {
   it("readline returns empty on non-TTY (does not throw)", async () => {
-    // In test environment, stdin is not a TTY — readline should
-    // use its non-TTY fallback and return without calling setRawMode
     const result = await readline()
     expect(typeof result).toBe("string")
   })
@@ -173,25 +168,58 @@ describe("readInput isTTY guard", () => {
   })
 })
 
-// ── C8: prompt evaluation consolidation ───────────────────
+// ── composable primitive architecture ─────────────────────
 
-describe("prompt evaluation fix", () => {
+describe("composable primitive architecture", () => {
   const replPath = import.meta.dir + "/../src/repl.ts"
 
-  it("repl.ts uses evalPrompt() for single evaluation", async () => {
+  it("repl.ts composes inputLine primitive", async () => {
     const source = await Bun.file(replPath).text()
-    expect(source).toContain("evalPrompt()")
+    expect(source).toContain('import { inputLine }')
+    expect(source).toContain("inp.render()")
+    expect(source).toContain("inp.submit()")
   })
 
-  it("repl.ts does not have separate getPrompt/getPromptWidth functions", async () => {
+  it("repl.ts composes liveBlock primitive", async () => {
     const source = await Bun.file(replPath).text()
-    // Old pattern removed
-    expect(source).not.toContain("function getPrompt()")
-    expect(source).not.toContain("function getPromptWidth()")
+    expect(source).toContain('import { liveBlock }')
+    expect(source).toContain("block.update()")
+    expect(source).toContain("block.close(")
+    expect(source).toContain("block.print(")
+  })
+
+  it("repl.ts composes keypressStream primitive", async () => {
+    const source = await Bun.file(replPath).text()
+    expect(source).toContain('import { keypressStream }')
+    expect(source).toContain("keypressStream((key")
+  })
+
+  it("repl.ts composes commandRouter primitive", async () => {
+    const source = await Bun.file(replPath).text()
+    expect(source).toContain('import { commandRouter }')
+    expect(source).toContain("router.match(")
+    expect(source).toContain("router.completions(")
+    expect(source).toContain("router!.helpText()")
+  })
+
+  it("repl.ts has no manual stdin/rawMode management", async () => {
+    const source = await Bun.file(replPath).text()
+    expect(source).not.toContain("setRawMode")
+    expect(source).not.toContain("stdin.on(\"data\"")
+    expect(source).not.toContain("stdin.resume()")
+    expect(source).not.toContain("stdin.pause()")
+  })
+
+  it("repl.ts has no manual cursor positioning", async () => {
+    const source = await Bun.file(replPath).text()
+    // no manual escape sequence rendering
+    expect(source).not.toContain("\\x1b[J")
+    expect(source).not.toContain("prevCursorRow")
+    expect(source).not.toContain("exitContent")
   })
 })
 
-// ── C4: SIGINT handler management ─────────────────────────
+// ── SIGINT handler management ─────────────────────────────
 
 describe("SIGINT handler accumulation fix", () => {
   const replPath = import.meta.dir + "/../src/repl.ts"
@@ -206,12 +234,11 @@ describe("SIGINT handler accumulation fix", () => {
   it("repl.ts has exactly one process.on SIGINT call", async () => {
     const source = await Bun.file(replPath).text()
     const matches = source.match(/process\.on\("SIGINT"/g)
-    // Exactly 1: inside installSigInt
     expect(matches?.length).toBe(1)
   })
 })
 
-// ── simplified repl behavior ──────────────────────────────
+// ── simplified repl structure ──────────────────────────────
 
 describe("simplified repl structure", () => {
   it("repl.ts has no live.ts imports (no stage coordination)", async () => {
@@ -247,21 +274,179 @@ describe("simplified repl structure", () => {
     expect(source).not.toContain("steering")
   })
 
-  it("repl.ts keeps core readline functionality", async () => {
+  it("repl.ts composes primitives instead of inline logic", async () => {
     const source = await Bun.file("src/repl.ts").text()
-    expect(source).toContain("readInput")
-    expect(source).toContain("readline")
-    expect(source).toContain("historyUp")
-    expect(source).toContain("historyDown")
+    // uses inputLine for editing
+    expect(source).toContain("inputLine")
+    // uses liveBlock for rendering
+    expect(source).toContain("liveBlock")
+    // uses keypressStream for input
+    expect(source).toContain("keypressStream")
+    // uses commandRouter for commands
+    expect(source).toContain("commandRouter")
+    // still has completion
     expect(source).toContain("completion")
+    // still has clearOnCancel
     expect(source).toContain("clearOnCancel")
   })
 
-  it("repl.ts is significantly smaller after cleanup", async () => {
+  it("repl.ts is significantly smaller after refactor", async () => {
     const source = await Bun.file("src/repl.ts").text()
     const lines = source.split("\n").length
-    // was 1221 lines, should be ~800 or less after removing ~410 lines
-    expect(lines).toBeLessThan(850)
-    expect(lines).toBeGreaterThan(400) // still substantial — readline + repl core
+    // was 695 lines, now composes primitives — should be under 550
+    expect(lines).toBeLessThan(550)
+    expect(lines).toBeGreaterThan(200) // still substantial — readline + repl core
+  })
+})
+
+// ── M14: Behavioral tests — pure helpers ──────────────────
+
+describe("wordAtCursor", () => {
+  test("returns empty word at start of empty buffer", () => {
+    const result = wordAtCursor("", 0)
+    expect(result.word).toBe("")
+    expect(result.start).toBe(0)
+  })
+
+  test("returns full word when cursor is at end", () => {
+    const result = wordAtCursor("hello", 5)
+    expect(result.word).toBe("hello")
+    expect(result.start).toBe(0)
+  })
+
+  test("returns partial word when cursor is mid-word", () => {
+    const result = wordAtCursor("hello", 3)
+    expect(result.word).toBe("hel")
+    expect(result.start).toBe(0)
+  })
+
+  test("returns last word in multi-word buffer", () => {
+    const result = wordAtCursor("git commit --amend", 18)
+    expect(result.word).toBe("--amend")
+    expect(result.start).toBe(11)
+  })
+
+  test("returns second word when cursor is at end of second word", () => {
+    const result = wordAtCursor("foo bar baz", 7)
+    expect(result.word).toBe("bar")
+    expect(result.start).toBe(4)
+  })
+
+  test("returns empty word after trailing space", () => {
+    const result = wordAtCursor("foo ", 4)
+    expect(result.word).toBe("")
+    expect(result.start).toBe(4)
+  })
+
+  test("handles cursor at start of non-empty buffer", () => {
+    const result = wordAtCursor("hello world", 0)
+    expect(result.word).toBe("")
+    expect(result.start).toBe(0)
+  })
+
+  test("returns word between spaces", () => {
+    const result = wordAtCursor("a bb ccc", 4)
+    expect(result.word).toBe("bb")
+    expect(result.start).toBe(2)
+  })
+})
+
+describe("commonPrefix", () => {
+  test("returns empty string for empty array", () => {
+    expect(commonPrefix([])).toBe("")
+  })
+
+  test("returns the string itself for single-element array", () => {
+    expect(commonPrefix(["hello"])).toBe("hello")
+  })
+
+  test("returns common prefix of two strings", () => {
+    expect(commonPrefix(["abc", "abd"])).toBe("ab")
+  })
+
+  test("returns common prefix of multiple strings", () => {
+    expect(commonPrefix(["react", "redux", "render"])).toBe("re")
+  })
+
+  test("returns empty when no common prefix", () => {
+    expect(commonPrefix(["abc", "xyz"])).toBe("")
+  })
+
+  test("returns full string when all identical", () => {
+    expect(commonPrefix(["test", "test", "test"])).toBe("test")
+  })
+
+  test("handles empty string in array", () => {
+    expect(commonPrefix(["abc", ""])).toBe("")
+  })
+
+  test("handles single-char common prefix", () => {
+    expect(commonPrefix(["/help", "/history", "/halt"])).toBe("/h")
+  })
+})
+
+// ── M14: Non-TTY repl behavioral tests ───────────────────
+
+describe("repl non-TTY behavior", () => {
+  let captured: string[]
+  const origWrite = console.write
+
+  beforeEach(() => {
+    captured = []
+    // @ts-ignore
+    console.write = (text: string) => { captured.push(text); return true }
+  })
+
+  afterEach(() => {
+    // @ts-ignore
+    console.write = origWrite
+  })
+
+  test("readline returns empty on non-TTY", async () => {
+    const result = await readline()
+    expect(typeof result).toBe("string")
+  })
+
+  test("readline returns default value on non-TTY", async () => {
+    const result = await readline({ default: "fallback" })
+    expect(result).toBe("fallback")
+  })
+
+  test("readline writes prompt on non-TTY", async () => {
+    await readline({ prompt: ">>> ", default: "val" })
+    expect(captured.join("")).toContain(">>> ")
+  })
+
+  test("readline with function prompt calls it on non-TTY", async () => {
+    let called = false
+    await readline({ prompt: () => { called = true; return "$ " }, default: "x" })
+    expect(called).toBe(true)
+  })
+})
+
+// ── CommandDef is re-exported Command type ────────────────
+
+describe("CommandDef backward compatibility", () => {
+  it("CommandDef is exported from repl.ts", async () => {
+    const mod = await import("../src/repl")
+    // CommandDef should be a type alias, but we can verify the export exists
+    expect("readline" in mod).toBe(true)
+    expect("repl" in mod).toBe(true)
+  })
+
+  it("CommandDef and Command have same shape", async () => {
+    const { commandRouter } = await import("../src/command-router")
+    // Both accept the same handler signature
+    const cmd: CommandDef = {
+      description: "test",
+      aliases: ["t"],
+      handler: (args: string, signal: AbortSignal) => {},
+      hidden: false,
+    }
+    // Should work with commandRouter (which expects Command)
+    const router = commandRouter({ test: cmd })
+    const match = router.match("/test args")
+    expect(match?.name).toBe("test")
+    expect(match?.args).toBe("args")
   })
 })

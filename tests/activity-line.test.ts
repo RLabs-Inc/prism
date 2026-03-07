@@ -102,4 +102,35 @@ describe("activityLine", () => {
     // pulse spinner has specific frames, just verify it renders
     expect(line).toContain("Pulsing")
   })
+
+  test("render returns different spinner frame after idx advances", () => {
+    const act = activityLine("Spinning")
+    const onTick = mock()
+    // First render at idx=0
+    const first = act.render()[0]
+    // Manually advance by starting and letting interval fire
+    // But since start uses setInterval, we simulate by calling start
+    // and checking that ticks change the frame.
+    // Instead, use freeze/render pattern: the idx is internal,
+    // advanced by the interval callback. We can verify by starting
+    // with a very short interval and waiting.
+    // Simpler: start, wait for tick, render again
+    act.start(onTick)
+    // Use a promise to wait for one tick
+    return new Promise<void>((resolve) => {
+      setTimeout(() => {
+        const second = act.render()[0]
+        // After at least one tick, idx has advanced, so frame should differ
+        // (dots spinner has 10 distinct frames)
+        expect(second).toContain("Spinning")
+        // The spinner frame character should have changed
+        // Strip the message to compare just the frame portion
+        const firstFrame = Bun.stripANSI(first).replace("Spinning", "").trim()
+        const secondFrame = Bun.stripANSI(second).replace("Spinning", "").trim()
+        expect(secondFrame).not.toBe(firstFrame)
+        act.stop()
+        resolve()
+      }, 200) // dots spinner interval is 80ms, so 200ms should advance at least once
+    })
+  })
 })

@@ -2,16 +2,16 @@
 // light through a prism, data through the terminal
 
 // Output
-export { write, writeln, error, pipeAware, termWidth, isTTY, visualRows } from "./writer"
+export { write, writeln, error, pipeAware, termWidth, isTTY, interactiveTTY, ansiEnabled, visualRows } from "./writer"
 
 // Styling
 export { s, color, RESET } from "./style"
 
 // Layout
-export { box, divider, header, borders, type BorderStyle } from "./box"
+export { box, divider, header, borders, type BorderStyle, type BoxOptions } from "./box"
 
 // Tables
-export { table } from "./table"
+export { table, type TableOptions, type Column, type Align } from "./table"
 
 // Markdown
 export { md } from "./markdown"
@@ -23,32 +23,32 @@ export { spinner, spinners, type SpinnerStyle, type SpinnerOptions, type Spinner
 export { progress, barStyles, type ProgressStyle, type ProgressOptions, type ProgressBar } from "./progress"
 
 // Badge
-export { badge } from "./badge"
+export { badge, type BadgeVariant, type BadgeOptions } from "./badge"
 
 // Text utilities
 export { truncate, indent, pad, link, wrap } from "./text"
 
 // Logging
-export { log } from "./log"
+export { log, type LogOptions } from "./log"
 
 // Lists
-export { list, kv, tree } from "./list"
+export { list, kv, tree, type ListStyle, type ListOptions } from "./list"
 
 // Columns
-export { columns } from "./columns"
+export { columns, type ColumnsOptions } from "./columns"
 
 // Interactive
 export { keypress, keypressStream, rawMode, type KeyEvent } from "./keypress"
-export { confirm, input, password, select, multiselect } from "./prompt"
+export { confirm, input, password, select, multiselect, type ConfirmOptions, type InputOptions, type PasswordOptions, type SelectOptions, type MultiSelectOptions } from "./prompt"
 
 // Banner
-export { banner } from "./banner"
+export { banner, type BannerStyle, type BannerOptions } from "./banner"
 
 // Timer
-export { stopwatch, countdown, bench, formatTime } from "./timer"
+export { stopwatch, countdown, bench, formatTime, type Stopwatch, type StopwatchResult, type CountdownOptions, type Countdown, type BenchResult } from "./timer"
 
 // Syntax highlighting
-export { highlight } from "./highlight"
+export { highlight, type Language, type HighlightOptions } from "./highlight"
 
 // Argument parsing
 export { args, type ArgsConfig, type ArgsResult, type FlagDef, type CommandDef as ArgCommandDef } from "./args"
@@ -83,6 +83,7 @@ export { filePreview, type FilePreviewOptions } from "./file-preview"
 // ── New Primitives ──────────────────────────────────────
 
 // Cursor — reference-counted hide/show
+/** cursorRefCount and resetCursor are testing utilities for verifying cursor state */
 export { hideCursor, showCursor, cursorRefCount, resetCursor } from "./cursor"
 
 // Elapsed — pure timer state machine
@@ -104,4 +105,4 @@ export { inputLine, type InputLine, type InputLineOptions } from "./input-line"
 export { commandRouter, type CommandRouter, type CommandMatch, type Command } from "./command-router"
 
 // Progress Bar — pure bar renderer
-export { renderProgressBar, type ProgressBarOptions as RenderProgressBarOptions } from "./progress-bar"
+export { renderProgressBar, type RenderProgressBarOptions, type ProgressStyle as RenderProgressStyle } from "./progress-bar"

@@ -13,6 +13,8 @@ import { spinners, type SpinnerStyle } from "./spinner"
 export interface SectionBlock {
   /** Update the title text */
   title(msg: string): void
+  /** Alias for title() — consistent with ActivityLine */
+  text(msg: string): void
   /** Add a content item below the title */
   add(line: string): void
   /** Replace all content items at once */
@@ -61,11 +63,11 @@ export function sectionBlock(title: string, options: SectionBlockOptions = {}): 
   let items: string[] = []
   let handle: ReturnType<typeof setInterval> | null = null
   const pad = " ".repeat(indent)
-  const timer_ = timer ? createElapsed() : null
+  const elapsedTimer = timer ? createElapsed() : null
 
   function timerStr(): string {
-    if (!timer_) return ""
-    return s.dim(` ${timer_.render()}`)
+    if (!elapsedTimer) return ""
+    return s.dim(` ${elapsedTimer.render()}`)
   }
 
   function buildLines(finalIcon?: string, iconColor?: (t: string) => string): string[] {
@@ -83,10 +85,11 @@ export function sectionBlock(title: string, options: SectionBlockOptions = {}): 
 
   return {
     title(m) { msg = m },
+    text(m) { msg = m },
 
     add(line) { items.push(line) },
 
-    body(content) { items = content.split("\n") },
+    body(content) { items = content.length === 0 ? [] : content.split("\n") },
 
     start(onTick) {
       if (handle) return

@@ -8,11 +8,8 @@
 import { isTTY } from "./writer"
 import { s } from "./style"
 import { hideCursor, showCursor } from "./cursor"
-import { elapsed as createElapsed } from "./elapsed"
-
-// --- Terminal control sequences ---
-const CLR  = "\x1b[2K"      // erase entire line
-const CR   = "\r"            // carriage return
+import { liveBlock } from "./block"
+import { activityLine as createActivityLine } from "./activity-line"
 
 // --- Spinner catalog ---
 // { f: frames[], ms: interval }
@@ -120,6 +117,8 @@ export interface SpinnerOptions {
   color?: (text: string) => string
   /** Show elapsed time */
   timer?: boolean
+  /** AbortSignal — auto-stops spinner when aborted */
+  signal?: AbortSignal
 }
 
 export interface Spinner {
@@ -150,16 +149,12 @@ export function spinner(text: string, options: SpinnerOptions = {}): Spinner {
   const frames = options.frames ?? def.f
   const interval = options.interval ?? def.ms
 
-  let idx = 0
-  let msg = text
-  let stopped = false
-  const timer_ = timer ? createElapsed() : null
-
   // --- Non-TTY: static text, no animation ---
   if (!isTTY) {
+    let msg = text
     console.write(text + "\n")
     return {
-      text(m) { console.write(m + "\n") },
+      text(m) { msg = m; console.write(m + "\n") },
       done(m) { console.write(`✓ ${m ?? msg}\n`) },
       fail(m) { console.write(`✗ ${m ?? msg}\n`) },
       warn(m) { console.write(`⚠ ${m ?? msg}\n`) },
@@ -168,40 +163,54 @@ export function spinner(text: string, options: SpinnerOptions = {}): Spinner {
     }
   }
 
-  // --- TTY: animated ---
+  // --- TTY: compose activityLine + liveBlock ---
+  const act = createActivityLine(text, {
+    icon: style,
+    frames,
+    interval,
+    color: colorFn,
+    timer,
+  })
+  let stopped = false
+
   hideCursor()
 
-  function timerStr(): string {
-    if (!timer_) return ""
-    return s.dim(` ${timer_.render()}`)
-  }
+  const block = liveBlock({
+    render: () => ({ lines: act.render() }),
+    tty: true,
+  })
 
-  function render() {
-    const frame = colorFn(frames[idx % frames.length])
-    console.write(`${CR}${CLR}${frame} ${msg}${timerStr()}`)
-    idx++
-  }
+  block.update()
+  act.start(() => block.update())
 
-  render()
-  const handle = setInterval(render, interval)
+  // Auto-stop on abort signal
+  if (options.signal) {
+    const onAbort = () => end("■", text, s.dim)
+    if (options.signal.aborted) {
+      onAbort()
+    } else {
+      options.signal.addEventListener("abort", onAbort, { once: true })
+    }
+  }
 
   function end(icon: string, finalMsg: string, iconColor: (t: string) => string) {
     if (stopped) return
     stopped = true
-    clearInterval(handle)
+    act.stop()
     try {
-      console.write(`${CR}${CLR}${iconColor(icon)} ${finalMsg}${timerStr()}\n`)
+      const frozen = act.freeze(icon, finalMsg, iconColor)
+      block.close(frozen[0])
     } finally {
       showCursor()
     }
   }
 
   return {
-    text(m) { msg = m },
-    done(m) { end("✓", m ?? msg, s.green) },
-    fail(m) { end("✗", m ?? msg, s.red) },
-    warn(m) { end("⚠", m ?? msg, s.yellow) },
-    info(m) { end("ℹ", m ?? msg, s.blue) },
+    text(m) { act.text(m) },
+    done(m) { end("✓", m ?? text, s.green) },
+    fail(m) { end("✗", m ?? text, s.red) },
+    warn(m) { end("⚠", m ?? text, s.yellow) },
+    info(m) { end("ℹ", m ?? text, s.blue) },
     stop(icon, m, color) { end(icon, m, color ?? s.white) },
   }
 }

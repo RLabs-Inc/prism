@@ -3,7 +3,7 @@
 // pure function: string in, string out, no I/O
 
 import { s } from "./style"
-import { isTTY } from "./writer"
+import { ansiEnabled } from "./writer"
 
 export interface DiffOptions {
   filename?: string
@@ -112,7 +112,7 @@ export function diff(oldText: string, newText: string, options: DiffOptions = {}
     const oldGutter = line.oldNum !== undefined ? String(line.oldNum).padStart(gutterWidth) : " ".repeat(gutterWidth)
     const newGutter = line.newNum !== undefined ? String(line.newNum).padStart(gutterWidth) : " ".repeat(gutterWidth)
 
-    if (!isTTY) {
+    if (!ansiEnabled) {
       // Plain text mode
       const marker = line.type === "add" ? "+" : line.type === "remove" ? "-" : " "
       output.push(`${marker} ${oldGutter} ${newGutter}  ${line.content}`)

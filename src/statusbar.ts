@@ -4,6 +4,7 @@
 
 import { s } from "./style"
 import { isTTY, termWidth } from "./writer"
+import { truncate } from "./text"
 
 // ── Types ─────────────────────────────────────────────────
 
@@ -71,10 +72,22 @@ export function statusbar(options: StatusBarOptions = {}): string {
   const leftStr = left.map(resolveSegment).join(styledSep)
   const rightStr = right ? resolveSegment(right) : ""
 
-  const leftWidth = displayWidth(leftStr)
-  const rightWidth = rightStr ? displayWidth(rightStr) : 0
   const total = termWidth()
-  const fillWidth = Math.max(1, total - indent - leftWidth - rightWidth)
+  const availableWidth = Math.max(0, total - indent)
 
-  return pad + leftStr + " ".repeat(fillWidth) + rightStr
+  if (!rightStr) {
+    return pad + truncate(leftStr, availableWidth)
+  }
+
+  const rightWidth = displayWidth(rightStr)
+  if (rightWidth >= availableWidth) {
+    return pad + truncate(rightStr, availableWidth)
+  }
+
+  const maxLeftWidth = Math.max(0, availableWidth - rightWidth - 1)
+  const leftDisplay = truncate(leftStr, maxLeftWidth)
+  const leftWidth = displayWidth(leftDisplay)
+  const fillWidth = Math.max(1, availableWidth - leftWidth - rightWidth)
+
+  return pad + leftDisplay + " ".repeat(fillWidth) + rightStr
 }

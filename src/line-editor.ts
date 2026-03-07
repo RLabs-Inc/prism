@@ -2,6 +2,12 @@
 // buffer + cursor manipulation with history, no terminal I/O
 // used by layout-based REPLs that handle their own rendering
 
+import {
+  nextGraphemeBoundary,
+  normalizeGraphemeBoundary,
+  previousGraphemeBoundary,
+} from "./unicode"
+
 // ── Types ────────────────────────────────────────────────
 
 export interface LineEditorOptions {
@@ -38,8 +44,14 @@ export interface LineEditor {
   wordRight(): void
   /** Delete word before cursor (Ctrl+W) */
   deleteWord(): void
-  /** Clear entire line (Ctrl+U) */
+  /** Clear text before cursor (Ctrl+U) */
+  clearBefore(): void
+  /** Clear text after cursor (Ctrl+K) */
+  clearAfter(): void
+  /** Clear entire line */
   clearLine(): void
+  /** Set buffer and cursor position directly */
+  setValue(text: string, pos?: number): void
   /** Submit: return buffer, add to history, reset state */
   submit(): string
   /** Navigate history up (older) */
@@ -79,14 +91,16 @@ export function lineEditor(options: LineEditorOptions = {}): LineEditor {
 
     backspace() {
       if (cursor === 0) return
-      buffer = buffer.slice(0, cursor - 1) + buffer.slice(cursor)
-      cursor--
+      const start = previousGraphemeBoundary(buffer, cursor)
+      buffer = buffer.slice(0, start) + buffer.slice(cursor)
+      cursor = start
       notify()
     },
 
     deleteChar() {
       if (cursor >= buffer.length) return
-      buffer = buffer.slice(0, cursor) + buffer.slice(cursor + 1)
+      const end = nextGraphemeBoundary(buffer, cursor)
+      buffer = buffer.slice(0, cursor) + buffer.slice(end)
       notify()
     },
 
@@ -101,12 +115,12 @@ export function lineEditor(options: LineEditorOptions = {}): LineEditor {
     },
 
     cursorLeft() {
-      if (cursor > 0) cursor--
+      if (cursor > 0) cursor = previousGraphemeBoundary(buffer, cursor)
       notify()
     },
 
     cursorRight() {
-      if (cursor < buffer.length) cursor++
+      if (cursor < buffer.length) cursor = nextGraphemeBoundary(buffer, cursor)
       notify()
     },
 
@@ -139,9 +153,28 @@ export function lineEditor(options: LineEditorOptions = {}): LineEditor {
       notify()
     },
 
+    clearBefore() {
+      if (cursor === 0) return
+      buffer = buffer.slice(cursor)
+      cursor = 0
+      notify()
+    },
+
+    clearAfter() {
+      if (cursor >= buffer.length) return
+      buffer = buffer.slice(0, cursor)
+      notify()
+    },
+
     clearLine() {
       buffer = ""
       cursor = 0
+      notify()
+    },
+
+    setValue(text: string, pos?: number) {
+      buffer = text
+      cursor = normalizeGraphemeBoundary(text, pos ?? text.length)
       notify()
     },
 
@@ -189,7 +222,7 @@ export function lineEditor(options: LineEditorOptions = {}): LineEditor {
       const stripped = Bun.stripANSI(prompt)
       return {
         line: prompt + buffer,
-        cursorCol: stripped.length + cursor,
+        cursorCol: Bun.stringWidth(stripped) + Bun.stringWidth(buffer.slice(0, cursor)),
       }
     },
 

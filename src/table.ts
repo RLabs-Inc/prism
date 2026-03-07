@@ -6,9 +6,9 @@ import { s } from "./style"
 import { borders, type BorderStyle } from "./box"
 import { truncate } from "./text"
 
-type Align = "left" | "center" | "right"
+export type Align = "left" | "center" | "right"
 
-interface Column {
+export interface Column {
   key: string
   label?: string
   align?: Align
@@ -19,7 +19,7 @@ interface Column {
   format?: (value: unknown) => string
 }
 
-interface TableOptions {
+export interface TableOptions {
   columns?: Column[]
   border?: BorderStyle
   borderColor?: string
@@ -57,10 +57,7 @@ export function table(data: Record<string, unknown>[], options: TableOptions = {
   const b = borders[border]
 
   const colorize = options.borderColor
-    ? (char: string) => {
-        const ansi = Bun.color(options.borderColor!, "ansi") ?? ""
-        return ansi + char + "\x1b[39m"
-      }
+    ? (char: string) => s.fg(options.borderColor!)(char)
     : (char: string) => char
 
   // Determine columns from data or options
@@ -103,16 +100,37 @@ export function table(data: Record<string, unknown>[], options: TableOptions = {
     return width
   })
 
+  const minWidths = columnDefs.map((col) => {
+    const colOpt = options.columns?.find(c => c.key === col.key)
+    return Math.max(1, colOpt?.minWidth ?? 1)
+  })
+
   // Add index column if requested
   if (index) {
     const indexWidth = Math.max(1, String(data.length - 1).length)
     columnDefs.unshift({ key: "__index", label: "#", align: "right" })
     colWidths.unshift(indexWidth)
+    minWidths.unshift(1)
     formatted.forEach((row, i) => row.unshift(String(i)))
   }
 
   const pad = compact ? "" : " "
   const padWidth = compact ? 0 : 1
+
+  const availableContentWidth = Math.max(0, maxWidth - ((colWidths.length + 1) + (colWidths.length * padWidth * 2)))
+  let currentContentWidth = colWidths.reduce((sum, width) => sum + width, 0)
+
+  while (currentContentWidth > availableContentWidth) {
+    let widest = -1
+    for (let i = 0; i < colWidths.length; i++) {
+      if (colWidths[i] > minWidths[i] && (widest === -1 || colWidths[i] > colWidths[widest])) {
+        widest = i
+      }
+    }
+    if (widest === -1) break
+    colWidths[widest]--
+    currentContentWidth--
+  }
 
   const result: string[] = []
 

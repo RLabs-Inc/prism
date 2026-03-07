@@ -2,7 +2,7 @@
 // leverages Bun.markdown.render() with hacker-themed ANSI callbacks
 
 import { s } from "./style"
-import { isTTY } from "./writer"
+import { ansiEnabled } from "./writer"
 import { divider } from "./box"
 
 // Internal sentinel for list items — private-use Unicode char that won't
@@ -13,7 +13,7 @@ const SENTINEL_RE = new RegExp(ITEM_SENTINEL, "g")
 
 /** Render markdown to styled terminal output */
 export function md(text: string): string {
-  if (!isTTY) {
+  if (!ansiEnabled) {
     // Strip to plain text when piped
     return Bun.markdown.render(text, {
       heading: (children) => children + "\n",
@@ -22,7 +22,7 @@ export function md(text: string): string {
       emphasis: (children) => children,
       code: (children) => children,
       codespan: (children) => children,
-      link: (children) => children,
+      link: (children, { href }) => href ? `${children} (${href})` : children,
       hr: () => "---\n",
       list: (children, { ordered }) => {
         if (ordered) {

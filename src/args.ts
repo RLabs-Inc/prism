@@ -10,7 +10,7 @@
 
 import { parseArgs } from "util"
 import { s } from "./style"
-import { isTTY } from "./writer"
+import { ansiEnabled } from "./writer"
 
 // --- Types ---
 
@@ -133,7 +133,6 @@ function printHelp(config: ArgsConfig, command?: string, commandDef?: CommandDef
   // Flags
   const commandFlags = commandDef?.flags ?? {}
   const globalFlags = config.flags ?? {}
-  const hasCommandFlags = Object.keys(commandFlags).length > 0
   const hasGlobalFlags = Object.keys(globalFlags).length > 0
 
   function printFlags(label: string, flags: Record<string, FlagDef>) {
@@ -141,12 +140,12 @@ function printHelp(config: ArgsConfig, command?: string, commandDef?: CommandDef
     if (entries.length === 0) return
 
     const formatted = entries.map(([name, def]) => formatFlag(name, def))
-    const maxLeft = Math.max(...formatted.map(([left]) => isTTY ? Bun.stringWidth(left) : left.length))
+    const maxLeft = Math.max(...formatted.map(([left]) => ansiEnabled ? Bun.stringWidth(left) : left.length))
 
     out()
     out(`  ${s.dim(label)}`)
     for (const [left, right] of formatted) {
-      const leftWidth = isTTY ? Bun.stringWidth(left) : left.length
+      const leftWidth = ansiEnabled ? Bun.stringWidth(left) : left.length
       const padding = " ".repeat(Math.max(0, maxLeft - leftWidth + 2))
       out(`    ${s.yellow(left)}${padding}  ${right}`)
     }
@@ -226,23 +225,31 @@ export function args(config: ArgsConfig): ArgsResult {
     parseOptions[name] = opt
   }
 
+  function parseWith(
+    options: Record<string, { type: "string" | "boolean", short?: string, default?: string | boolean }>,
+  ): ReturnType<typeof parseArgs> | null {
+    try {
+      return parseArgs({
+        args: argv,
+        options,
+        allowPositionals: true,
+        strict: false,
+      })
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.write(`${s.red("✗")} ${msg}\n`)
+      console.write(s.dim(`  Run '${config.name} --help' for usage.\n\n`))
+      if (!config.noExit) process.exit(1)
+      return null
+    }
+  }
+
   // Parse first to separate flags from positionals
-  let parsed: ReturnType<typeof parseArgs>
+  let parsed = parseWith(parseOptions)
   let command: string | undefined
   let commandDef: CommandDef | undefined
 
-  try {
-    parsed = parseArgs({
-      args: argv,
-      options: parseOptions,
-      allowPositionals: true,
-      strict: false,
-    })
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    console.write(`${s.red("✗")} ${msg}\n`)
-    console.write(s.dim(`  Run '${config.name} --help' for usage.\n\n`))
-    if (!config.noExit) process.exit(1)
+  if (!parsed) {
     return { command, flags: {}, args: [], showHelp() { }, showVersion() { } }
   }
 
@@ -255,7 +262,40 @@ export function args(config: ArgsConfig): ArgsResult {
     }
   }
 
+  if (commandDef?.flags) {
+    const selectedFlagDefs: Record<string, FlagDef> = {
+      ...(config.flags ?? {}),
+      ...(commandDef.flags ?? {}),
+    }
+
+    if (!selectedFlagDefs["help"]) {
+      selectedFlagDefs["help"] = { type: "boolean", short: "h", description: "Show help" }
+    }
+    if (config.version && !selectedFlagDefs["version"]) {
+      selectedFlagDefs["version"] = { type: "boolean", description: "Show version" }
+    }
+
+    const selectedParseOptions: Record<string, { type: "string" | "boolean", short?: string, default?: string | boolean }> = {}
+    for (const [name, def] of Object.entries(selectedFlagDefs)) {
+      selectedParseOptions[name] = {
+        type: def.type,
+        ...(def.short ? { short: def.short } : {}),
+        ...(def.default !== undefined ? { default: def.default } : {}),
+      }
+    }
+
+    const reparsed = parseWith(selectedParseOptions)
+    if (!reparsed) {
+      return { command, flags: {}, args: [], showHelp() { }, showVersion() { } }
+    }
+    parsed = reparsed
+  }
+
   const flags = parsed.values as Record<string, string | boolean | undefined>
+  const effectiveFlagDefs: Record<string, FlagDef> = {
+    ...(config.flags ?? {}),
+    ...(commandDef?.flags ?? {}),
+  }
 
   // Apply command-specific flag defaults (override global defaults for same-named flags)
   if (commandDef?.flags) {
@@ -272,7 +312,9 @@ export function args(config: ArgsConfig): ArgsResult {
       }
     }
   }
-  const positionals = parsed.positionals.filter(p => p !== command)
+  const positionals = command && parsed.positionals[0] === command
+    ? parsed.positionals.slice(1)
+    : parsed.positionals
 
   // Result with help/version methods
   const result: ArgsResult = {
@@ -329,7 +371,7 @@ export function args(config: ArgsConfig): ArgsResult {
   }
 
   // Validate required flags
-  for (const [name, def] of Object.entries(allFlagDefs)) {
+  for (const [name, def] of Object.entries(effectiveFlagDefs)) {
     if (def.required && flags[name] === undefined) {
       console.write(`${s.red("✗")} Missing required flag: ${s.yellow(`--${name}`)}\n`)
       console.write(s.dim(`  Run '${config.name}${command ? ` ${command}` : ""} --help' for usage.\n\n`))

@@ -40,8 +40,15 @@ const specialKeys: Record<string, string> = {
   "\x1b[21~": "f10",
   "\x1b[23~": "f11",
   "\x1b[24~": "f12",
+  "\x1b[1;5D": "wordleft",   // Ctrl+Left
+  "\x1b[1;5C": "wordright",  // Ctrl+Right
+  "\x1bOd":    "wordleft",   // rxvt Ctrl+Left
+  "\x1bOc":    "wordright",  // rxvt Ctrl+Right
   " ":        "space",
 }
+
+let rawModeRefs = 0
+let stdinRefs = 0
 
 function parseKey(data: string): KeyEvent {
   const ctrl = data.length === 1 && data.charCodeAt(0) >= 1 && data.charCodeAt(0) <= 26
@@ -54,6 +61,7 @@ function parseKey(data: string): KeyEvent {
   if (special) {
     // named special key takes priority (enter, tab, backspace, arrows, etc.)
     key = special
+    if (data === " ") char = " "
   } else if (ctrl) {
     // ctrl+a = 0x01, ctrl+z = 0x1a
     key = String.fromCharCode(data.charCodeAt(0) + 96) // ctrl+a → "a"
@@ -79,23 +87,49 @@ function parseKey(data: string): KeyEvent {
 
 /** Enable raw mode on stdin */
 export function rawMode(enable: boolean): void {
-  if (process.stdin.isTTY) {
-    process.stdin.setRawMode(enable)
+  if (!process.stdin.isTTY) return
+
+  if (enable) {
+    rawModeRefs++
+    if (rawModeRefs === 1) process.stdin.setRawMode(true)
+    return
+  }
+
+  if (rawModeRefs === 0) return
+  rawModeRefs--
+  if (rawModeRefs === 0) process.stdin.setRawMode(false)
+}
+
+function acquireStdin(): void {
+  if (stdinRefs === 0) {
+    process.stdin.resume()
+    process.stdin.setEncoding("utf8")
+  }
+  stdinRefs++
+  rawMode(true)
+}
+
+function releaseStdin(): void {
+  if (stdinRefs === 0) return
+  stdinRefs--
+  rawMode(false)
+  if (stdinRefs === 0) {
+    process.stdin.pause()
   }
 }
 
 /** Read a single keypress. Enables/disables raw mode automatically. */
 export function keypress(): Promise<KeyEvent> {
   return new Promise((resolve, reject) => {
-    rawMode(true)
-    process.stdin.resume()
-    process.stdin.setEncoding("utf8")
+    acquireStdin()
+    let active = true
 
     function cleanup() {
+      if (!active) return
+      active = false
       process.stdin.removeListener("data", handler)
       process.stdin.removeListener("error", errorHandler)
-      process.stdin.pause()
-      rawMode(false)
+      releaseStdin()
     }
 
     const handler = (data: string) => {
@@ -115,9 +149,8 @@ export function keypress(): Promise<KeyEvent> {
 
 /** Read keypresses continuously. Call the returned stop function to end. */
 export function keypressStream(callback: (key: KeyEvent) => void | "stop"): () => void {
-  rawMode(true)
-  process.stdin.resume()
-  process.stdin.setEncoding("utf8")
+  acquireStdin()
+  let active = true
 
   const handler = (data: string) => {
     const result = callback(parseKey(data))
@@ -129,10 +162,11 @@ export function keypressStream(callback: (key: KeyEvent) => void | "stop"): () =
   }
 
   const stop = () => {
+    if (!active) return
+    active = false
     process.stdin.removeListener("data", handler)
     process.stdin.removeListener("error", errorHandler)
-    process.stdin.pause()
-    rawMode(false)
+    releaseStdin()
   }
 
   process.stdin.on("data", handler)

@@ -415,12 +415,12 @@ describe("fail", () => {
 // =============================================================================
 
 describe("freeze", () => {
-  test("returns full output as string", () => {
+  test("returns full output as string[]", () => {
     const cmd = exec("echo hello", OPTS)
     cmd.write("hello\n")
     cmd.done(0)
     const frozen = cmd.freeze()
-    expect(typeof frozen).toBe("string")
+    expect(Array.isArray(frozen)).toBe(true)
   })
 
   test("contains all output lines regardless of maxHeight", () => {
@@ -428,7 +428,7 @@ describe("freeze", () => {
     const input = Array.from({ length: 10 }, (_, i) => `line ${i + 1}\n`).join("")
     cmd.write(input)
     cmd.done(0)
-    const frozen = strip(cmd.freeze())
+    const frozen = strip(cmd.freeze().join("\n"))
     // All 10 lines should be present
     for (let i = 1; i <= 10; i++) {
       expect(frozen).toContain(`line ${i}`)
@@ -438,44 +438,44 @@ describe("freeze", () => {
   test("contains command line", () => {
     const cmd = exec("nmap -sV target.com", OPTS)
     cmd.done(0)
-    const frozen = strip(cmd.freeze())
+    const frozen = strip(cmd.freeze().join("\n"))
     expect(frozen).toContain("$ nmap -sV target.com")
   })
 
   test("contains header with title", () => {
     const cmd = exec("test", { ...OPTS, title: "shell" })
     cmd.done(0)
-    const frozen = strip(cmd.freeze())
+    const frozen = strip(cmd.freeze().join("\n"))
     expect(frozen).toContain("shell")
   })
 
   test("contains footer with exit status", () => {
     const cmd = exec("test", OPTS)
     cmd.done(0)
-    const frozen = strip(cmd.freeze())
+    const frozen = strip(cmd.freeze().join("\n"))
     expect(frozen).toContain("exit 0")
   })
 
   test("freeze after fail shows error in footer", () => {
     const cmd = exec("test", OPTS)
     cmd.fail("segfault")
-    const frozen = strip(cmd.freeze())
+    const frozen = strip(cmd.freeze().join("\n"))
     expect(frozen).toContain("segfault")
   })
 
   test("freeze while running shows running status", () => {
     const cmd = exec("test", OPTS)
     cmd.write("output\n")
-    const frozen = strip(cmd.freeze())
+    const frozen = strip(cmd.freeze().join("\n"))
     expect(frozen).toContain("running")
   })
 
-  test("lines joined with newlines", () => {
+  test("returns array of lines", () => {
     const cmd = exec("test", OPTS)
     cmd.write("line 1\n")
     cmd.done(0)
     const frozen = cmd.freeze()
-    expect(frozen.split("\n").length).toBeGreaterThan(1)
+    expect(frozen.length).toBeGreaterThan(1)
   })
 })
 

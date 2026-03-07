@@ -89,13 +89,13 @@ export function layout(options?: LayoutOptions): Layout {
         options?.onClose?.()
       },
       activity(text, opts?) {
-        return liveActivity(text, opts)
+        return liveActivity(text, { ...opts, tty: false })
       },
       section(title, opts?) {
-        return liveSection(title, opts)
+        return liveSection(title, { ...opts, tty: false })
       },
       stream(opts?) {
-        return createStream({ ...opts, layout: ly })
+        return createStream({ ...opts, layout: ly, tty: false })
       },
     }
     return ly
@@ -125,10 +125,17 @@ export function layout(options?: LayoutOptions): Layout {
   }
 
   /** Render active zone lines and position cursor */
-  function drawActive() {
-    if (!renderFn) return
-    const { lines, cursor } = renderFn()
+  function drawActive(frame?: ReturnType<ActiveRender>) {
+    const rendered = frame ?? renderFn?.()
+    if (!rendered) return
+    const { lines, cursor } = rendered
     const width = process.stdout.columns || 80
+
+    if (lines.length === 0) {
+      prevHeight = 0
+      prevCursorRow = 0
+      return
+    }
 
     for (const line of lines) {
       console.write(`${line}\n`)
@@ -206,28 +213,37 @@ export function layout(options?: LayoutOptions): Layout {
         renderFn = render
         return
       }
+      renderFn = render
+      const frame = renderFn()
+      if (prevHeight === 0 && frame.lines.length === 0) return
       console.write(SYNC_BEGIN)
       eraseActive()
-      renderFn = render
-      drawActive()
+      drawActive(frame)
       console.write(SYNC_END)
     },
 
     refresh() {
       if (closed || !renderFn) return
       if (liveActive > 0) return // live component handles footer rendering
+      const frame = renderFn()
+      if (prevHeight === 0 && frame.lines.length === 0) return
       console.write(SYNC_BEGIN)
       eraseActive()
-      drawActive()
+      drawActive(frame)
       console.write(SYNC_END)
     },
 
     print(text) {
       if (closed) return
+      const frame = renderFn?.()
+      if (!frame || (prevHeight === 0 && frame.lines.length === 0)) {
+        console.write(text + "\n")
+        return
+      }
       console.write(SYNC_BEGIN)
       eraseActive()
       console.write(text + "\n")
-      drawActive()
+      drawActive(frame)
       console.write(SYNC_END)
     },
 
@@ -243,10 +259,16 @@ export function layout(options?: LayoutOptions): Layout {
       const complete = writeBuffer.slice(0, lastNewline)
       writeBuffer = writeBuffer.slice(lastNewline + 1)
 
+      const frame = renderFn?.()
+      if (!frame || (prevHeight === 0 && frame.lines.length === 0)) {
+        console.write(complete + "\n")
+        return
+      }
+
       console.write(SYNC_BEGIN)
       eraseActive()
       console.write(complete + "\n")
-      drawActive()
+      drawActive(frame)
       console.write(SYNC_END)
     },
 
@@ -254,8 +276,14 @@ export function layout(options?: LayoutOptions): Layout {
       if (closed) return
       closed = true
 
+      const hasActive = prevHeight > 0
+      const hasBufferedOutput = writeBuffer.length > 0
+
+      if (hasActive || hasBufferedOutput) console.write(SYNC_BEGIN)
       eraseActive()
+      if (hasBufferedOutput) console.write(writeBuffer + "\n")
       if (message) console.write(message + "\n")
+      if (hasActive || hasBufferedOutput) console.write(SYNC_END)
 
       prevHeight = 0
       prevCursorRow = 0

@@ -4,7 +4,7 @@
 
 import { termWidth } from "./writer"
 
-interface ColumnsOptions {
+export interface ColumnsOptions {
   /** Gap between columns (default: 2) */
   gap?: number
   /** Left padding (default: 0) */
@@ -19,7 +19,7 @@ export function columns(items: string[], options: ColumnsOptions = {}): string {
   if (items.length === 0) return ""
 
   const { gap = 2, padding = 0, minWidth = 10, maxColumns: maxCols } = options
-  const totalWidth = termWidth() - (padding * 2)
+  const totalWidth = termWidth() - padding
 
   // column width = widest item
   const maxItemWidth = Math.max(...items.map(item => Bun.stringWidth(item)))

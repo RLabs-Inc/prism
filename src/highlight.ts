@@ -3,11 +3,11 @@
 // not a full parser - just enough to make code readable in CLI output
 
 import { s } from "./style"
-import { isTTY } from "./writer"
+import { ansiEnabled } from "./writer"
 
-type Language = "typescript" | "javascript" | "json" | "bash" | "sql" | "graphql" | "rust" | "auto"
+export type Language = "typescript" | "javascript" | "json" | "bash" | "sql" | "graphql" | "rust" | "auto"
 
-interface HighlightOptions {
+export interface HighlightOptions {
   language?: Language
   lineNumbers?: boolean
   startLine?: number
@@ -92,7 +92,7 @@ interface HighlightState {
 }
 
 function highlightLine(line: string, lang: Language, state: HighlightState = { inString: null }): { result: string; state: HighlightState } {
-  if (!isTTY) return { result: line, state }
+  if (!ansiEnabled) return { result: line, state }
   if (lang === "json") return { result: highlightJSON(line), state: { inString: null } }
 
   const kw = keywords[lang] ?? keywords['typescript']
@@ -195,7 +195,7 @@ function highlightLine(line: string, lang: Language, state: HighlightState = { i
 }
 
 function highlightJSON(line: string): string {
-  if (!isTTY) return line
+  if (!ansiEnabled) return line
   return line
     .replace(/"([^"]+)"(?=\s*:)/g, (_, key) => s.cyan(`"${key}"`))
     .replace(/:\s*"([^"]*)"(?=[,}\]]|$)/g, (_, val) => `: ${s.green(`"${val}"`)}`)

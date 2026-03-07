@@ -110,4 +110,24 @@ describe("sectionBlock", () => {
     sec.start(mock()) // ignored
     sec.stop()
   })
+
+  test("render returns different spinner frame after idx advances", () => {
+    const sec = sectionBlock("Spinning")
+    const onTick = mock()
+    // First render at idx=0
+    const first = sec.render()[0]
+    sec.start(onTick)
+    return new Promise<void>((resolve) => {
+      setTimeout(() => {
+        const second = sec.render()[0]
+        expect(second).toContain("Spinning")
+        // The spinner frame character should have changed
+        const firstFrame = Bun.stripANSI(first).replace("Spinning", "").trim()
+        const secondFrame = Bun.stripANSI(second).replace("Spinning", "").trim()
+        expect(secondFrame).not.toBe(firstFrame)
+        sec.stop()
+        resolve()
+      }, 200)
+    })
+  })
 })

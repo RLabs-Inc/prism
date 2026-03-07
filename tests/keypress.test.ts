@@ -134,6 +134,10 @@ describe("parseKey algorithm", () => {
     "\x1b[21~": "f10",
     "\x1b[23~": "f11",
     "\x1b[24~": "f12",
+    "\x1b[1;5D": "wordleft",
+    "\x1b[1;5C": "wordright",
+    "\x1bOd":    "wordleft",
+    "\x1bOc":    "wordright",
     " ":        "space",
   }
 
@@ -275,8 +279,28 @@ describe("parseKey algorithm", () => {
       }
     })
 
-    test("total special keys count is 28", () => {
-      expect(Object.keys(specialKeys).length).toBe(28)
+    test("Ctrl+Left maps to wordleft", () => {
+      const ev = parseKey("\x1b[1;5D")
+      expect(ev.key).toBe("wordleft")
+    })
+
+    test("Ctrl+Right maps to wordright", () => {
+      const ev = parseKey("\x1b[1;5C")
+      expect(ev.key).toBe("wordright")
+    })
+
+    test("rxvt Ctrl+Left maps to wordleft", () => {
+      const ev = parseKey("\x1bOd")
+      expect(ev.key).toBe("wordleft")
+    })
+
+    test("rxvt Ctrl+Right maps to wordright", () => {
+      const ev = parseKey("\x1bOc")
+      expect(ev.key).toBe("wordright")
+    })
+
+    test("total special keys count is 32", () => {
+      expect(Object.keys(specialKeys).length).toBe(32)
     })
   })
 

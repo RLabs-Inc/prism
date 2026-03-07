@@ -3,7 +3,7 @@
 // 5×5 pixel font rendered with ██ blocks
 
 import { s } from "./style"
-import { isTTY } from "./writer"
+import { ansiEnabled } from "./writer"
 
 // 5-row bitmap font (each character is 5 rows of binary, 5 cols wide)
 // bit 1 = filled, bit 0 = empty, read left to right
@@ -58,9 +58,9 @@ const font: Record<string, number[]> = {
   " ": [0b00000, 0b00000, 0b00000, 0b00000, 0b00000],
 }
 
-type BannerStyle = "block" | "shade" | "dots" | "ascii" | "outline"
+export type BannerStyle = "block" | "shade" | "dots" | "ascii" | "outline"
 
-interface BannerOptions {
+export interface BannerOptions {
   /** Block style (default: "block") */
   style?: BannerStyle
   /** Color function for the filled blocks */
@@ -82,7 +82,7 @@ const fills: Record<BannerStyle, [string, string]> = {
 export function banner(text: string, options: BannerOptions = {}): string {
   const {
     style = "block",
-    color: colorFn = isTTY ? s.bold : (t: string) => t,
+    color: colorFn = ansiEnabled ? s.bold : (t: string) => t,
     letterSpacing = 1,
   } = options
 
@@ -96,17 +96,19 @@ export function banner(text: string, options: BannerOptions = {}): string {
 
   for (let row = 0; row < 5; row++) {
     let line = ""
+    let rendered = 0
     for (let c = 0; c < upper.length; c++) {
       const char = upper[c]
       const bitmap = font[char]
       if (!bitmap) continue
 
-      if (c > 0) line += actualEmpty.repeat(letterSpacing)
+      if (rendered > 0) line += actualEmpty.repeat(letterSpacing)
 
       for (let col = 4; col >= 0; col--) {
         const bit = (bitmap[row] >> col) & 1
         line += bit ? actualFilled : actualEmpty
       }
+      rendered++
     }
     rows.push(colorFn(line))
   }

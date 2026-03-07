@@ -9,7 +9,7 @@
 // the block only remembers ONE thing: previous visual row count
 // content, line count, primitives can change every frame
 
-import { visualRows } from "./writer"
+import { isTTY, visualRows } from "./writer"
 
 // DEC private mode 2026 — synchronized output
 // buffer all writes between BEGIN/END, render as single atomic frame
@@ -36,7 +36,7 @@ export interface LiveBlockOptions {
 
 export function liveBlock(options: LiveBlockOptions): LiveBlock {
   const { render, onClose, tty } = options
-  const ttyMode = tty ?? (Bun.enableANSIColors || process.env.FORCE_COLOR === "1")
+  const ttyMode = tty ?? isTTY
 
   // Non-TTY: print writes to stdout, update/close are minimal
   if (!ttyMode) {

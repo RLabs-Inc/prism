@@ -1,5 +1,5 @@
 // prism/live - live terminal components (convenience wrappers)
-// compose activityLine/sectionBlock + terminal I/O for standalone use
+// compose activityLine/sectionBlock + liveBlock for standalone use
 //
 // activity() - single-line: icon + text + timer + metrics
 // section()  - multi-line: title spinner + collapsible items
@@ -7,14 +7,15 @@
 // lifecycle: create → animate/update → done/fail → frozen in scrollback
 //
 // footer support: when a footer is provided (e.g., the repl frame),
-// live components render their content ABOVE the footer and redraw
-// the footer on every tick. when done(), the content freezes into
-// scrollback and footer.onEnd() is called to let the owner redraw.
+// live components include footer lines in the liveBlock render and
+// position the cursor above the footer. on done(), liveBlock.close()
+// erases everything and footer.onEnd() lets the owner redraw.
 
 import { s } from "./style"
-import { isTTY, visualRows } from "./writer"
+import { isTTY } from "./writer"
 import { type SpinnerStyle } from "./spinner"
 import { hideCursor, showCursor } from "./cursor"
+import { liveBlock } from "./block"
 import { activityLine as createActivityLine } from "./activity-line"
 import { sectionBlock as createSectionBlock } from "./section-block"
 
@@ -25,51 +26,6 @@ export interface FooterConfig {
   render: () => string[]
   /** Called when the live component ends (done/fail/stop) - owner redraws footer */
   onEnd: () => void
-}
-
-// ── Block renderer (internal) ────────────────────────────
-// manages a multi-line region that updates in-place
-// with footer: renders footer below content, cursor stays above footer
-
-function createBlock(footer?: FooterConfig) {
-  let prevHeight = 0
-
-  return {
-    render(lines: string[]) {
-      if (prevHeight > 0) console.write(`\x1b[${prevHeight}A`)
-      console.write("\r\x1b[J")
-
-      for (const line of lines) {
-        console.write(`${line}\n`)
-      }
-
-      if (footer) {
-        const footerLines = footer.render()
-        for (const line of footerLines) {
-          console.write(`${line}\n`)
-        }
-        if (footerLines.length > 0) {
-          const footerVisualRows = footerLines.reduce((sum, l) => sum + visualRows(l), 0)
-          console.write(`\x1b[${footerVisualRows}A`)
-        }
-      }
-
-      prevHeight = lines.reduce((sum, l) => sum + visualRows(l), 0)
-    },
-
-    freeze(lines: string[]) {
-      if (prevHeight > 0) console.write(`\x1b[${prevHeight}A`)
-      console.write("\r\x1b[J")
-
-      for (const line of lines) {
-        console.write(`${line}\n`)
-      }
-
-      if (footer) footer.onEnd()
-    },
-
-    get height() { return prevHeight },
-  }
 }
 
 // ── Activity ──────────────────────────────────────────────
@@ -132,18 +88,30 @@ export function activity(text: string, options: ActivityOptions = {}): Activity 
 
   // TTY: compose activityLine state machine + terminal I/O
   const act = createActivityLine(text, { icon, timer, color: colorFn, metrics })
-  const block = footerConfig ? createBlock(footerConfig) : null
   let stopped = false
 
   hideCursor()
 
+  // With footer: use liveBlock for multi-line atomic rendering
+  const block = footerConfig ? liveBlock({
+    render() {
+      const contentLines = act.render()
+      const footerLines = footerConfig.render()
+      return {
+        lines: [...contentLines, ...footerLines],
+        cursor: [contentLines.length - 1, 0] as [number, number],
+      }
+    },
+    onClose: () => footerConfig.onEnd(),
+    tty: true,
+  }) : null
+
   function render() {
     if (stopped) return
-    const lines = act.render()
     if (block) {
-      block.render(lines)
+      block.update()
     } else {
-      console.write(`\r\x1b[2K${lines[0]}`)
+      console.write(`\r\x1b[2K${act.render()[0]}`)
     }
   }
 
@@ -159,7 +127,7 @@ export function activity(text: string, options: ActivityOptions = {}): Activity 
       if (newMsg) act.text(newMsg)
       const frozen = act.freeze(endIcon, iconColor)
       if (block) {
-        block.freeze(frozen)
+        block.close(frozen[0])
       } else {
         console.write(`\r\x1b[2K${frozen[0]}\n`)
       }
@@ -202,6 +170,8 @@ export interface SectionOptions {
 export interface Section {
   /** Update the title text */
   title(msg: string): void
+  /** Alias for title() — consistent with Activity */
+  text(msg: string): void
   /** Add a content item below the title */
   add(line: string): void
   /** Replace all content items at once */
@@ -210,6 +180,10 @@ export interface Section {
   done(msg?: string): void
   /** Freeze with ✗ */
   fail(msg?: string): void
+  /** Freeze with ⚠ */
+  warn(msg?: string): void
+  /** Freeze with ℹ */
+  info(msg?: string): void
   /** Freeze with custom icon */
   stop(icon: string, msg: string, color?: (t: string) => string): void
 }
@@ -233,16 +207,19 @@ export function section(title: string, options: SectionOptions = {}): Section {
     const pad = " ".repeat(indent)
     console.write(`${pad}${title}\n`)
     return {
-      title() {},
+      title(m) { console.write(`${pad}${m}\n`) },
+      text(m) { console.write(`${pad}${m}\n`) },
       add(line) { console.write(`${pad}${connector}  ${line}\n`) },
       body(content) { for (const l of content.split("\n")) console.write(`${pad}${connector}  ${l}\n`) },
       done(msg) { console.write(`${pad}✓ ${msg ?? title}\n`) },
       fail(msg) { console.write(`${pad}✗ ${msg ?? title}\n`) },
+      warn(msg) { console.write(`${pad}⚠ ${msg ?? title}\n`) },
+      info(msg) { console.write(`${pad}ℹ ${msg ?? title}\n`) },
       stop(icon, msg) { console.write(`${pad}${icon} ${msg}\n`) },
     }
   }
 
-  // TTY: compose sectionBlock state machine + terminal I/O
+  // TTY: compose sectionBlock state machine + liveBlock
   const sec = createSectionBlock(title, {
     spinner: spinnerStyle,
     color: colorFn,
@@ -251,14 +228,29 @@ export function section(title: string, options: SectionOptions = {}): Section {
     timer,
     collapseOnDone,
   })
-  const block = createBlock(footerConfig)
   let stopped = false
 
   hideCursor()
 
+  const block = liveBlock({
+    render() {
+      const contentLines = sec.render()
+      if (footerConfig) {
+        const footerLines = footerConfig.render()
+        return {
+          lines: [...contentLines, ...footerLines],
+          cursor: [contentLines.length - 1, 0] as [number, number],
+        }
+      }
+      return { lines: contentLines }
+    },
+    onClose: footerConfig ? () => footerConfig.onEnd() : undefined,
+    tty: true,
+  })
+
   function render() {
     if (stopped) return
-    block.render(sec.render())
+    block.update()
   }
 
   render()
@@ -270,7 +262,8 @@ export function section(title: string, options: SectionOptions = {}): Section {
     sec.stop()
 
     try {
-      block.freeze(sec.freeze(icon, newMsg, iconColor))
+      const frozen = sec.freeze(icon, newMsg, iconColor)
+      block.close(frozen.join("\n"))
     } finally {
       showCursor()
     }
@@ -278,10 +271,13 @@ export function section(title: string, options: SectionOptions = {}): Section {
 
   return {
     title(m) { sec.title(m) },
+    text(m) { sec.title(m) },
     add(line) { sec.add(line); render() },
     body(content) { sec.body(content); render() },
     done(m) { end("✓", m, s.green) },
     fail(m) { end("✗", m, s.red) },
+    warn(m) { end("⚠", m, s.yellow) },
+    info(m) { end("ℹ", m, s.blue) },
     stop(icon, m, color) { end(icon, m, color ?? s.white) },
   }
 }

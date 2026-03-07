@@ -281,6 +281,26 @@ describe("args", () => {
       expect(output).toContain("mytool")
       expect(output).toContain("--help")
     })
+
+    test("command-specific required flag is enforced", () => {
+      args({
+        name: "hunt",
+        commands: {
+          sync: {
+            flags: {
+              target: { type: "string", required: true },
+            },
+          },
+        },
+        argv: ["sync"],
+        noExit: true,
+      })
+
+      const output = Bun.stripANSI(capturedOutput())
+      expect(output).toContain("Missing required flag")
+      expect(output).toContain("--target")
+      expect(output).toContain("hunt sync --help")
+    })
   })
 
   describe("--help auto-generation", () => {

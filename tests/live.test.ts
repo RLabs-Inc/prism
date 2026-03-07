@@ -90,25 +90,26 @@ describe("createBlock visual row tracking", () => {
     expect(out).toContain(UP(3))
   })
 
-  test("activity with wrapping content erases correctly on done", () => {
+  test("activity with footer erases correctly on done", () => {
     Object.defineProperty(process.stdout, "columns", { value: 40, writable: true })
 
-    // Activity with footer uses createBlock
-    let footerDrawn = false
+    // Activity with footer uses liveBlock
+    let footerEnded = false
     const footer = {
-      render: () => { footerDrawn = true; return ["footer"] },
-      onEnd: () => {},
+      render: () => ["footer"],
+      onEnd: () => { footerEnded = true },
     }
 
     const act = activity("Short message", { icon: ">", color: t => t, footer, tty: true })
-    // Activity renders 1 short line via createBlock, footer adds 1 line
 
     captured = []
     act.done("Done")
 
     const out = output()
-    // Block had 1 visual row of content, freeze should move up by 1
-    expect(out).toContain(UP(1))
+    // liveBlock clears block and writes frozen message
+    expect(out).toContain(CLEAR)
+    expect(out).toContain("✓ Done")
+    expect(footerEnded).toBe(true)
   })
 
   test("empty lines count as 1 visual row each", () => {

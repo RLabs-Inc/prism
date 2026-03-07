@@ -6,9 +6,9 @@ import { s } from "./style"
 
 // --- Lists ---
 
-type ListStyle = "bullet" | "dash" | "numbered" | "alpha" | "arrow" | "star" | "check"
+export type ListStyle = "bullet" | "dash" | "numbered" | "alpha" | "arrow" | "star" | "check"
 
-interface ListOptions {
+export interface ListOptions {
   style?: ListStyle
   indent?: number
   color?: (t: string) => string
@@ -80,7 +80,9 @@ export function kv(data: Record<string, string> | [string, string][], options: K
 
 // --- Tree ---
 
-type TreeData = Record<string, TreeData | null>
+interface TreeData {
+  [name: string]: TreeData | null
+}
 
 interface TreeOptions {
   fileColor?: (t: string) => string

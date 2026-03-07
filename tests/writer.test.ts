@@ -1,6 +1,6 @@
 // Tests for prism/writer - pipe-aware output
 import { describe, test, expect } from "bun:test"
-import { write, writeln, error, pipeAware, termWidth, isTTY } from "../src/writer"
+import { write, writeln, error, pipeAware, termWidth, isTTY, interactiveTTY, ansiEnabled } from "../src/writer"
 
 // ─── isTTY ──────────────────────────────────────────────────────────
 describe("isTTY", () => {
@@ -8,8 +8,17 @@ describe("isTTY", () => {
     expect(typeof isTTY).toBe("boolean")
   })
 
-  test("isTTY equals Bun.enableANSIColors", () => {
-    expect(isTTY).toBe(Bun.enableANSIColors)
+  test("isTTY equals process.stdout.isTTY", () => {
+    expect(isTTY).toBe(process.stdout.isTTY === true)
+  })
+
+  test("interactiveTTY requires both stdin and stdout tty", () => {
+    expect(interactiveTTY).toBe(process.stdout.isTTY === true && process.stdin.isTTY === true)
+  })
+
+  test("ansiEnabled follows ANSI/color capability", () => {
+    expect(typeof ansiEnabled).toBe("boolean")
+    expect(ansiEnabled).toBe(Bun.enableANSIColors || process.env.FORCE_COLOR === "1")
   })
 })
 
@@ -31,13 +40,13 @@ describe("termWidth", () => {
 // ─── pipeAware ──────────────────────────────────────────────────────
 describe("pipeAware", () => {
   test("returns text unchanged in TTY mode", () => {
-    if (!isTTY) return
+    if (!ansiEnabled) return
     const text = "\x1b[31mred text\x1b[39m"
     expect(pipeAware(text)).toBe(text)
   })
 
-  test("strips ANSI in non-TTY mode", () => {
-    if (isTTY) return
+  test("strips ANSI when ANSI output is disabled", () => {
+    if (ansiEnabled) return
     const text = "\x1b[31mred text\x1b[39m"
     expect(pipeAware(text)).toBe("red text")
   })
@@ -54,7 +63,7 @@ describe("pipeAware", () => {
   test("handles text with only ANSI codes", () => {
     const ansiOnly = "\x1b[31m\x1b[39m"
     const result = pipeAware(ansiOnly)
-    if (isTTY) {
+    if (ansiEnabled) {
       expect(result).toBe(ansiOnly)
     } else {
       expect(result).toBe("")
@@ -64,7 +73,7 @@ describe("pipeAware", () => {
   test("handles text with multiple ANSI sequences", () => {
     const text = "\x1b[1m\x1b[31mbold red\x1b[39m\x1b[22m"
     const result = pipeAware(text)
-    if (isTTY) {
+    if (ansiEnabled) {
       expect(result).toBe(text)
     } else {
       expect(result).toBe("bold red")

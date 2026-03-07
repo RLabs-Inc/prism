@@ -61,6 +61,18 @@ describe("inputLine", () => {
     expect(inp.cursor).toBe(0)
   })
 
+  test("submit mutates shared history", () => {
+    const history: string[] = []
+    const inp = inputLine({ history, historySize: 2 })
+    inp.insertChar("first")
+    inp.submit()
+    inp.insertChar("second")
+    inp.submit()
+    inp.insertChar("third")
+    inp.submit()
+    expect(history).toEqual(["third", "second"])
+  })
+
   test("history navigation", () => {
     const history = ["first", "second"]
     const inp = inputLine({ history })
@@ -105,9 +117,94 @@ describe("inputLine", () => {
     expect(inp.cursor).toBe(12) // after "world "
   })
 
+  test("clearBefore clears text before cursor", () => {
+    const inp = inputLine()
+    inp.insertChar("hello world")
+    inp.home()
+    for (let i = 0; i < 6; i++) inp.cursorRight()
+    inp.clearBefore()
+    expect(inp.buffer).toBe("world")
+    expect(inp.cursor).toBe(0)
+  })
+
+  test("clearAfter clears text after cursor", () => {
+    const inp = inputLine()
+    inp.insertChar("hello world")
+    inp.home()
+    for (let i = 0; i < 5; i++) inp.cursorRight()
+    inp.clearAfter()
+    expect(inp.buffer).toBe("hello")
+  })
+
+  test("setValue sets buffer and cursor", () => {
+    const inp = inputLine()
+    inp.insertChar("old")
+    inp.setValue("new content", 3)
+    expect(inp.buffer).toBe("new content")
+    expect(inp.cursor).toBe(3)
+    // render should reflect new value
+    const { lines } = inp.render()
+    expect(lines[0]).toContain("new content")
+  })
+
   test("exposes editor", () => {
     const inp = inputLine()
     expect(inp.editor).toBeDefined()
     expect(inp.editor.buffer).toBe("")
+  })
+
+  test("deleteChar removes character at cursor position", () => {
+    const inp = inputLine()
+    inp.insertChar("hello")
+    inp.home() // cursor at 0
+    inp.deleteChar() // removes "h"
+    expect(inp.buffer).toBe("ello")
+    expect(inp.cursor).toBe(0)
+  })
+
+  test("deleteChar at end of buffer is no-op", () => {
+    const inp = inputLine()
+    inp.insertChar("hello")
+    // cursor is at end (5)
+    inp.deleteChar()
+    expect(inp.buffer).toBe("hello")
+    expect(inp.cursor).toBe(5)
+  })
+
+  test("deleteChar removes character in the middle", () => {
+    const inp = inputLine()
+    inp.insertChar("abcde")
+    inp.home()
+    inp.cursorRight()
+    inp.cursorRight() // cursor at 2, before 'c'
+    inp.deleteChar() // removes 'c'
+    expect(inp.buffer).toBe("abde")
+    expect(inp.cursor).toBe(2)
+  })
+
+  test("deleteWord removes word before cursor", () => {
+    const inp = inputLine()
+    inp.insertChar("hello world")
+    inp.deleteWord() // removes "world"
+    expect(inp.buffer).toBe("hello ")
+    expect(inp.cursor).toBe(6)
+  })
+
+  test("deleteWord removes multiple words with repeated calls", () => {
+    const inp = inputLine()
+    inp.insertChar("one two three")
+    inp.deleteWord() // removes "three"
+    expect(inp.buffer).toBe("one two ")
+    inp.deleteWord() // removes "two "
+    expect(inp.buffer).toBe("one ")
+  })
+
+  test("deleteWord at start of buffer is no-op", () => {
+    const inp = inputLine()
+    inp.insertChar("hello")
+    inp.home()
+    inp.deleteWord()
+    expect(inp.buffer).toBe("hello")
+    expect(inp.cursor).toBe(0)
   })
 })

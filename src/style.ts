@@ -1,7 +1,7 @@
 // prism/style - composable terminal styling
 // built on Bun.color() for ANSI output
 
-import { isTTY } from "./writer"
+import { ansiEnabled } from "./writer"
 
 // ANSI escape codes - the raw building blocks
 const ESC = "\x1b["
@@ -153,7 +153,7 @@ const styles: Record<string, StyleDef> = {
 
 function createStyle(stack: StyleDef[] = []): Style {
   const apply: StyleFn = (text: string) => {
-    if (!isTTY) return Bun.stripANSI(text)
+    if (!ansiEnabled) return Bun.stripANSI(text)
     if (stack.length === 0) return text
 
     let open = ""
@@ -203,11 +203,13 @@ export const s = createStyle()
  * For terminal-themed colors, use s.red(), s.green(), etc.
  */
 export function color(text: string, fg: string, bg?: string): string {
-  if (!isTTY) return Bun.stripANSI(text)
+  if (!ansiEnabled) return Bun.stripANSI(text)
   let result = ""
   result += fgExact(fg)
   if (bg) result += bgExact(bg)
-  result += text + RESET
+  result += text
+  if (bg) result += BG_OFF
+  result += COLOR_OFF
   return result
 }
 

@@ -17,6 +17,7 @@ import { s } from "./style"
 import { termWidth } from "./writer"
 import { borders, type BorderStyle } from "./box"
 import { truncate } from "./text"
+import { elapsed as createElapsed } from "./elapsed"
 
 // ── Types ─────────────────────────────────────
 
@@ -48,8 +49,8 @@ export interface Exec {
   fail(error: string): void
   /** Render current state as lines for embedding in an active zone */
   render(): string[]
-  /** Render full output as a complete box string for freezing to scrollback */
-  freeze(): string
+  /** Render full output as lines for freezing to scrollback */
+  freeze(): string[]
   /** Whether the command is still running */
   readonly running: boolean
   /** Whether there's more content than maxHeight */
@@ -69,16 +70,6 @@ function processCarriageReturn(line: string): string {
   return parts[parts.length - 1]!
 }
 
-/** Elapsed time as compact string */
-function elapsed(t0: number): string {
-  const ms = Date.now() - t0
-  if (ms < 1000) return `${ms}ms`
-  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`
-  const m = Math.floor(ms / 60_000)
-  const sec = Math.floor((ms % 60_000) / 1000)
-  return `${m}m${sec}s`
-}
-
 // ── Exec ──────────────────────────────────────
 
 export function exec(command: string, options: ExecOptions = {}): Exec {
@@ -93,25 +84,30 @@ export function exec(command: string, options: ExecOptions = {}): Exec {
   } = options
 
   const b = borders[border]
-  const t0 = Date.now()
+  const elapsedTimer = createElapsed()
 
   // ── State ──
 
+  const maxLines = 10000
   let lines: string[] = []
+  let droppedLines = 0
   let partial = ""
   let scrollPos = 0
   let userScrolled = false
   let stopped = false
-  let _exitCode: number | null = null
+  let exitCode: number | null = null
   let errorMsg: string | null = null
 
   // ── Internal helpers ──
 
   /** Get all displayable lines (completed + current partial) */
   function allLines(): string[] {
-    const all = [...lines]
+    if (!partial) return lines
     const p = processCarriageReturn(partial)
-    if (p) all.push(p)
+    if (!p) return lines
+    // Only allocate when partial is present (render path)
+    const all = lines.slice()
+    all.push(p)
     return all
   }
 
@@ -156,21 +152,18 @@ export function exec(command: string, options: ExecOptions = {}): Exec {
       if (errorMsg !== null) {
         statusText = `${s.red("✗")} ${errorMsg}`
       } else {
-        const icon = _exitCode === 0 ? s.green("✓") : s.red("✗")
+        const icon = exitCode === 0 ? s.green("✓") : s.red("✗")
         const parts = [icon]
-        if (timer) parts.push(s.dim(elapsed(t0)))
-        parts.push(_exitCode === 0 ? s.green(`exit ${_exitCode}`) : s.red(`exit ${_exitCode}`))
+        if (timer) parts.push(s.dim(elapsedTimer.render()))
+        parts.push(exitCode === 0 ? s.green(`exit ${exitCode}`) : s.red(`exit ${exitCode}`))
         statusText = parts.join(s.dim(" · "))
       }
     } else {
       const parts: string[] = []
-      if (timer) parts.push(elapsed(t0))
+      if (timer) parts.push(elapsedTimer.render())
       parts.push("running")
       statusText = s.dim(parts.join(" · "))
     }
-    const status = ` ${statusText} `
-    const statusWidth = Bun.stringWidth(Bun.stripANSI(status))
-
     // Left: scroll position (only when scrollable)
     let scroll = ""
     let scrollWidth = 0
@@ -181,13 +174,13 @@ export function exec(command: string, options: ExecOptions = {}): Exec {
       scrollWidth = Bun.stringWidth(Bun.stripANSI(scroll))
     }
 
-    // Fill between scroll info and status
-    const fill = Math.max(0, width - 2 - statusWidth - scrollWidth)
+    const contentWidth = Math.max(0, width - 2)
+    const maxStatusWidth = Math.max(0, contentWidth - scrollWidth)
+    const status = truncate(` ${statusText} `, maxStatusWidth)
+    const statusWidth = Bun.stringWidth(Bun.stripANSI(status))
+    const fill = Math.max(0, contentWidth - scrollWidth - statusWidth)
 
-    if (scroll) {
-      return colorFn(b.bl + b.h) + scroll + colorFn(b.h.repeat(Math.max(0, fill - 1))) + status + colorFn(b.br)
-    }
-    return colorFn(b.bl + b.h.repeat(fill)) + status + colorFn(b.br)
+    return colorFn(b.bl) + scroll + colorFn(b.h.repeat(fill)) + status + colorFn(b.br)
   }
 
   // ── Interface ──
@@ -211,6 +204,13 @@ export function exec(command: string, options: ExecOptions = {}): Exec {
         lines.push(processCarriageReturn(seg))
       }
 
+      // Cap line buffer to prevent unbounded growth
+      if (lines.length > maxLines) {
+        const excess = lines.length - maxLines
+        lines = lines.slice(excess)
+        droppedLines += excess
+      }
+
       // Auto-scroll to bottom unless user has manually scrolled
       if (!userScrolled) {
         scrollPos = maxScroll()
@@ -226,7 +226,7 @@ export function exec(command: string, options: ExecOptions = {}): Exec {
     done(code) {
       if (stopped) return
       stopped = true
-      _exitCode = code
+      exitCode = code
 
       // Flush partial line
       if (partial) {
@@ -285,6 +285,7 @@ export function exec(command: string, options: ExecOptions = {}): Exec {
       const width = boxWidth()
       const innerWidth = width - 4
       const result: string[] = []
+      const all = allLines()
 
       // Header
       result.push(renderHeader(width))
@@ -294,14 +295,14 @@ export function exec(command: string, options: ExecOptions = {}): Exec {
       result.push(renderContentLine(cmdDisplay, innerWidth))
 
       // All output lines — no scrolling, full content
-      for (const line of lines) {
+      for (const line of all) {
         result.push(renderContentLine(line, innerWidth))
       }
 
       // Footer with final status
-      result.push(renderFooter(width, lines))
+      result.push(renderFooter(width, all))
 
-      return result.join("\n")
+      return result
     },
 
     get running() { return !stopped },

@@ -1,15 +1,25 @@
 // prism/repl - interactive prompt loop
+// composes: inputLine + liveBlock + keypressStream + commandRouter
+//
 // two exports:
 //   readline() - single prompt with full line editing, history, completion
 //   repl()     - persistent prompt loop with slash commands and abort support
-// built on raw stdin, not node readline - full control, zero deps
 
 import { s } from "./style"
-import { isTTY, termWidth } from "./writer"
+import { interactiveTTY } from "./writer"
+import { keypressStream } from "./keypress"
+import { inputLine } from "./input-line"
+import { liveBlock } from "./block"
+import { commandRouter } from "./command-router"
+import type { KeyEvent } from "./keypress"
+import type { Command } from "./command-router"
 
 // ── Types ─────────────────────────────────────────────────
 
 type PromptFn = string | (() => string)
+
+/** @deprecated Use Command from command-router instead */
+export type CommandDef = Command
 
 export interface ReadlineOptions {
   /** Prompt string or function for dynamic prompts */
@@ -26,17 +36,6 @@ export interface ReadlineOptions {
   promptColor?: (text: string) => string
   /** Mask character for sensitive input (e.g., "●") */
   mask?: string
-}
-
-export interface CommandDef {
-  /** Shown in /help listing */
-  description?: string
-  /** Aliases (e.g., ["h"] for "help") */
-  aliases?: string[]
-  /** Handler receives args and abort signal */
-  handler: (args: string, signal: AbortSignal) => Promise<void> | void
-  /** Hide from /help listing */
-  hidden?: boolean
 }
 
 export interface ReplOptions {
@@ -75,19 +74,15 @@ type InputAction =
 
 // ── Helpers ───────────────────────────────────────────────
 
-function resolvePrompt(p: PromptFn): string {
-  return typeof p === "function" ? p() : p
-}
-
 /** Find the word being typed at cursor position */
-function wordAtCursor(buffer: string, cursor: number): { word: string; start: number } {
+export function wordAtCursor(buffer: string, cursor: number): { word: string; start: number } {
   let start = cursor
   while (start > 0 && buffer[start - 1] !== " ") start--
   return { word: buffer.slice(start, cursor), start }
 }
 
 /** Longest common prefix of strings */
-function commonPrefix(strings: string[]): string {
+export function commonPrefix(strings: string[]): string {
   if (strings.length === 0) return ""
   let prefix = strings[0]
   for (let i = 1; i < strings.length; i++) {
@@ -99,14 +94,14 @@ function commonPrefix(strings: string[]): string {
   return prefix
 }
 
-// ── Core input reader ─────────────────────────────────────
+// ── Core input reader (composes primitives) ───────────────
 
 interface InputConfig {
   prompt: PromptFn
   promptColor: (t: string) => string
   initial: string
   history?: string[]
-  historySize: number
+  historySize?: number
   completion?: (word: string, line: string) => string[]
   mask?: string
   /** When true, Ctrl+C with text clears line instead of resolving */
@@ -114,307 +109,138 @@ interface InputConfig {
 }
 
 async function readInput(config: InputConfig): Promise<InputAction> {
-  let buffer = config.initial
-  let cursor = buffer.length
-  let historyIndex = -1
-  let savedInput = ""
-  let prevCursorRow = 0  // which row of our block the cursor is on (for multi-line)
-
-  /** Evaluate prompt once — returns both styled string and visual width */
-  function evalPrompt(): { styled: string; width: number } {
-    const raw = resolvePrompt(config.prompt)
-    return { styled: config.promptColor(raw), width: Bun.stringWidth(raw) }
+  if (!interactiveTTY) {
+    return { action: "cancel" }
   }
 
-  /** Move cursor past the content block to a fresh line below */
-  function exitContent() {
-    const cols = termWidth()
-    const display = config.mask ? config.mask.repeat(buffer.length) : buffer
-    const { width: promptWidth } = evalPrompt()
-    const totalW = promptWidth + Bun.stringWidth(display)
-    const rows = cols > 0 ? Math.max(1, Math.ceil(totalW / cols)) : 1
-    const down = rows - 1 - prevCursorRow
-    if (down > 0) console.write(`\x1b[${down}B`)
-    console.write("\r\n")
-  }
+  const inp = inputLine({
+    prompt: config.prompt,
+    promptColor: config.promptColor,
+    history: config.history,
+    historySize: config.historySize,
+    mask: config.mask,
+  })
 
-  function render(hint?: string) {
-    const display = config.mask ? config.mask.repeat(buffer.length) : buffer
+  if (config.initial) inp.insertChar(config.initial)
 
-    // ── multi-line aware render ──────────────────────────
-    // handles input that wraps past terminal width
-    const cols = termWidth()
-    const { styled: prompt, width: promptWidth } = evalPrompt()
-    const hintText = hint ? s.dim("  " + hint) : ""
+  let hint = ""
+  const block = liveBlock({
+    render() {
+      const r = inp.render()
+      if (hint) r.lines[0] += s.dim("  " + hint)
+      return r
+    },
+  })
 
-    // 1. move to origin of our content block
-    if (prevCursorRow > 0) console.write(`\x1b[${prevCursorRow}A`)
-    console.write(`\r\x1b[J`) // column 0, clear to end of screen
+  block.update()
 
-    // 2. write content (terminal wraps naturally at width)
-    console.write(prompt + display + hintText)
-
-    // 3. calculate dimensions
-    const displayWidth = Bun.stringWidth(display)
-    const hintWidth = hint ? Bun.stringWidth("  " + hint) : 0
-    const totalWidth = promptWidth + displayWidth + hintWidth
-    const contentRows = cols > 0 ? Math.max(1, Math.ceil(totalWidth / cols)) : 1
-
-    // 4. target cursor position (linear → row/col)
-    const cursorDisplay = config.mask
-      ? config.mask.repeat(cursor)
-      : buffer.slice(0, cursor)
-    const targetLinear = promptWidth + Bun.stringWidth(cursorDisplay)
-    const targetRow = cols > 0 ? Math.floor(targetLinear / cols) : 0
-    const targetCol = cols > 0 ? targetLinear % cols : 0
-
-    // 5. ensure row exists when cursor is at exact terminal-width boundary
-    const numRows = Math.max(contentRows, targetRow + 1)
-    for (let i = contentRows; i < numRows; i++) console.write("\n")
-
-    // 6. navigate from end-of-content to target position
-    console.write("\r") // column 0 of last row
-    const currentRow = numRows - 1
-    const rowUp = currentRow - targetRow
-    if (rowUp > 0) console.write(`\x1b[${rowUp}A`)
-    if (targetCol > 0) console.write(`\x1b[${targetCol}C`)
-
-    prevCursorRow = targetRow
-  }
-
-  // --- cursor movement ---
-
-  function cursorLeft() {
-    if (cursor > 0) cursor--
-  }
-
-  function cursorRight() {
-    if (cursor < buffer.length) cursor++
-  }
-
-  function cursorHome() {
-    cursor = 0
-  }
-
-  function cursorEnd() {
-    cursor = buffer.length
-  }
-
-  function wordLeft() {
-    while (cursor > 0 && buffer[cursor - 1] === " ") cursor--
-    while (cursor > 0 && buffer[cursor - 1] !== " ") cursor--
-  }
-
-  function wordRight() {
-    while (cursor < buffer.length && buffer[cursor] !== " ") cursor++
-    while (cursor < buffer.length && buffer[cursor] === " ") cursor++
-  }
-
-  // --- editing ---
-
-  function insert(text: string) {
-    buffer = buffer.slice(0, cursor) + text + buffer.slice(cursor)
-    cursor += text.length
-  }
-
-  function backspace() {
-    if (cursor > 0) {
-      buffer = buffer.slice(0, cursor - 1) + buffer.slice(cursor)
-      cursor--
-    }
-  }
-
-  function deleteChar() {
-    if (cursor < buffer.length) {
-      buffer = buffer.slice(0, cursor) + buffer.slice(cursor + 1)
-    }
-  }
-
-  function deleteWordBack() {
-    const start = cursor
-    while (cursor > 0 && buffer[cursor - 1] === " ") cursor--
-    while (cursor > 0 && buffer[cursor - 1] !== " ") cursor--
-    buffer = buffer.slice(0, cursor) + buffer.slice(start)
-  }
-
-  function clearBefore() {
-    buffer = buffer.slice(cursor)
-    cursor = 0
-  }
-
-  function clearAfter() {
-    buffer = buffer.slice(0, cursor)
-  }
-
-  // --- history ---
-
-  function historyUp() {
-    if (!config.history || config.history.length === 0) return
-    if (historyIndex === -1) savedInput = buffer
-    if (historyIndex < config.history.length - 1) {
-      historyIndex++
-      buffer = config.history[historyIndex]
-      cursor = buffer.length
-    }
-  }
-
-  function historyDown() {
-    if (!config.history || historyIndex === -1) return
-    historyIndex--
-    buffer = historyIndex === -1 ? savedInput : config.history[historyIndex]
-    cursor = buffer.length
-  }
-
-  function pushHistory() {
-    if (!config.history || !buffer.trim()) return
-    // no consecutive duplicates
-    if (config.history[0] !== buffer) {
-      config.history.unshift(buffer)
-      if (config.history.length > config.historySize) config.history.pop()
-    }
-  }
-
-  // --- first render ---
-  render()
-
-  // --- read loop ---
   return new Promise<InputAction>((resolve) => {
-    if (!process.stdin.isTTY) {
-      resolve({ action: "cancel" })
-      return
-    }
-
-    let resolved = false
-
-    process.stdin.setRawMode(true)
-    process.stdin.resume()
-    process.stdin.setEncoding("utf8")
-
-    function cleanup() {
-      process.stdin.removeListener("data", handler)
-      process.stdin.pause()
-      process.stdin.setRawMode(false)
-    }
-
-    function done(result: InputAction) {
-      if (resolved) return
-      resolved = true
-      cleanup()
-      resolve(result)
-    }
-
-    function handler(data: string) {
+    keypressStream((key: KeyEvent) => {
+      hint = ""
 
       // ── Enter: submit ─────────────────────────────────
-      if (data === "\r" || data === "\n") {
-        pushHistory()
-        exitContent()
-        done({ action: "submit", value: buffer })
-        return
+      if (key.key === "enter") {
+        const value = inp.buffer
+        const finalLine = inp.render().lines[0]
+        inp.submit()
+        block.close(finalLine)
+        resolve({ action: "submit", value })
+        return "stop"
       }
 
       // ── Ctrl+C ────────────────────────────────────────
-      if (data === "\x03") {
-        if (config.clearOnCancel && buffer.length > 0) {
-          // clear line and continue reading
-          console.write(s.dim("^C\n"))
-          buffer = ""
-          cursor = 0
-          historyIndex = -1
-          prevCursorRow = 0
-          render()
+      if (key.ctrl && key.key === "c") {
+        if (config.clearOnCancel && inp.buffer.length > 0) {
+          block.print(s.dim("^C"))
+          inp.clearLine()
+          block.update()
           return
         }
-        // signal cancel
-        exitContent()
-        done({ action: "cancel" })
-        return
+        block.close()
+        resolve({ action: "cancel" })
+        return "stop"
       }
 
       // ── Ctrl+D ────────────────────────────────────────
-      if (data === "\x04") {
-        if (buffer.length === 0) {
+      if (key.ctrl && key.key === "d") {
+        if (inp.buffer.length === 0) {
           console.write("\n")
-          done({ action: "eof" })
-          return
+          block.close()
+          resolve({ action: "eof" })
+          return "stop"
         }
-        // forward delete when buffer has content
-        deleteChar()
-        render()
+        inp.deleteChar()
+        block.update()
         return
       }
 
       // ── Tab: completion ───────────────────────────────
-      if (data === "\t" && config.completion) {
-        const { word, start } = wordAtCursor(buffer, cursor)
-        const candidates = config.completion(word, buffer)
+      if (key.key === "tab" && config.completion) {
+        const { word, start } = wordAtCursor(inp.buffer, inp.cursor)
+        const candidates = config.completion(word, inp.buffer)
 
         if (candidates.length === 0) return
 
         if (candidates.length === 1) {
-          // single match: complete it
-          buffer = buffer.slice(0, start) + candidates[0] + buffer.slice(cursor)
-          cursor = start + candidates[0].length
-          render()
+          const newBuf = inp.buffer.slice(0, start) + candidates[0] + inp.buffer.slice(inp.cursor)
+          inp.setValue(newBuf, start + candidates[0].length)
+          block.update()
           return
         }
 
         // multiple matches: insert common prefix, show candidates as hint
         const prefix = commonPrefix(candidates)
         if (prefix.length > word.length) {
-          buffer = buffer.slice(0, start) + prefix + buffer.slice(cursor)
-          cursor = start + prefix.length
+          const newBuf = inp.buffer.slice(0, start) + prefix + inp.buffer.slice(inp.cursor)
+          inp.setValue(newBuf, start + prefix.length)
         }
 
         const maxShow = 8
-        const hint = candidates.slice(0, maxShow).join(", ")
+        hint = candidates.slice(0, maxShow).join(", ")
           + (candidates.length > maxShow ? `, +${candidates.length - maxShow} more` : "")
-        render(hint)
+        block.update()
         return
       }
 
       // ── Arrow keys ────────────────────────────────────
-      if (data === "\x1b[A") { historyUp(); render(); return }    // Up
-      if (data === "\x1b[B") { historyDown(); render(); return }  // Down
-      if (data === "\x1b[C") { cursorRight(); render(); return }  // Right
-      if (data === "\x1b[D") { cursorLeft(); render(); return }   // Left
+      if (key.key === "up")    { inp.historyUp(); block.update(); return }
+      if (key.key === "down")  { inp.historyDown(); block.update(); return }
+      if (key.key === "right") { inp.cursorRight(); block.update(); return }
+      if (key.key === "left")  { inp.cursorLeft(); block.update(); return }
 
       // ── Home / End ────────────────────────────────────
-      if (data === "\x01" || data === "\x1b[H") { cursorHome(); render(); return }  // Ctrl+A / Home
-      if (data === "\x05" || data === "\x1b[F") { cursorEnd(); render(); return }   // Ctrl+E / End
+      if (key.key === "home" || (key.ctrl && key.key === "a")) { inp.home(); block.update(); return }
+      if (key.key === "end" || (key.ctrl && key.key === "e"))  { inp.end(); block.update(); return }
 
       // ── Word movement ─────────────────────────────────
-      if (data === "\x1b[1;5D" || data === "\x1bb" || data === "\x1bOd") { wordLeft(); render(); return }   // Ctrl+Left / Alt+B
-      if (data === "\x1b[1;5C" || data === "\x1bf" || data === "\x1bOc") { wordRight(); render(); return }  // Ctrl+Right / Alt+F
+      if (key.key === "wordleft" || (key.meta && key.key === "b"))  { inp.wordLeft(); block.update(); return }
+      if (key.key === "wordright" || (key.meta && key.key === "f")) { inp.wordRight(); block.update(); return }
 
       // ── Editing shortcuts ─────────────────────────────
-      if (data === "\x7f")     { backspace(); render(); return }       // Backspace
-      if (data === "\x1b[3~")  { deleteChar(); render(); return }      // Delete key
-      if (data === "\x17")     { deleteWordBack(); render(); return }  // Ctrl+W
-      if (data === "\x15")     { clearBefore(); render(); return }     // Ctrl+U
-      if (data === "\x0b")     { clearAfter(); render(); return }      // Ctrl+K
+      if (key.key === "backspace") { inp.backspace(); block.update(); return }
+      if (key.key === "delete")    { inp.deleteChar(); block.update(); return }
+      if (key.ctrl && key.key === "w") { inp.deleteWord(); block.update(); return }
+      if (key.ctrl && key.key === "u") { inp.clearBefore(); block.update(); return }
+      if (key.ctrl && key.key === "k") { inp.clearAfter(); block.update(); return }
 
       // ── Ctrl+L: clear screen ──────────────────────────
-      if (data === "\x0c") {
+      if (key.ctrl && key.key === "l") {
         console.write("\x1b[2J\x1b[H")
-        prevCursorRow = 0
-        render()
+        block.update()
         return
       }
 
       // ── Regular characters / paste ────────────────────
-      if (!data.startsWith("\x1b") && data.charCodeAt(0) >= 32) {
+      if (key.char && !key.ctrl && !key.meta) {
         // paste: flatten newlines to spaces for single-line mode
-        const clean = data.replace(/\r?\n/g, " ")
-        insert(clean)
-        render()
+        const clean = key.char.replace(/\r?\n/g, " ")
+        inp.insertChar(clean)
+        block.update()
         return
       }
 
       // unhandled escape sequences: ignore
-    }
-
-    process.stdin.on("data", handler)
+    })
   })
 }
 
@@ -430,8 +256,8 @@ async function readInput(config: InputConfig): Promise<InputAction> {
  */
 export async function readline(options: ReadlineOptions = {}): Promise<string> {
   // non-TTY: read one line from stdin
-  if (!isTTY) {
-    const prompt = resolvePrompt(options.prompt ?? "")
+  if (!interactiveTTY) {
+    const prompt = typeof options.prompt === "function" ? options.prompt() : (options.prompt ?? "")
     if (prompt) console.write(prompt)
     const text = await Bun.stdin.text()
     const line = text.split("\n")[0]?.trim() ?? ""
@@ -483,66 +309,39 @@ export async function repl(options: ReplOptions): Promise<void> {
   // shared history array
   const history = historyEnabled ? [] as string[] : undefined
 
-  // ── command map (includes aliases) ──────────────────────
+  // ── build command router with auto-help ─────────────────
 
-  const commandMap = new Map<string, { name: string; def: CommandDef }>()
+  const allCommands: Record<string, Command> = commands ? { ...commands } : {}
 
-  if (commands) {
-    for (const [name, def] of Object.entries(commands)) {
-      commandMap.set(name, { name, def })
-      for (const alias of def.aliases ?? []) {
-        commandMap.set(alias, { name, def })
-      }
-    }
-
-    // auto-register /help if not defined
-    if (!commandMap.has("help")) {
-      const helpDef: CommandDef = {
-        description: "Show available commands",
-        aliases: ["h", "?"],
-        handler: () => {
-          const entries = Object.entries(commands).filter(([, d]) => !d.hidden)
-          if (entries.length === 0) {
-            console.write(s.dim("  No commands available.") + "\n")
-            return
-          }
-          const maxLen = Math.max(...entries.map(([n]) => n.length))
-          const lines: string[] = [""]
-          for (const [name, def] of entries) {
-            const aliases = def.aliases
-              ? s.dim(` (${def.aliases.map(a => commandPrefix + a).join(", ")})`)
-              : ""
-            const desc = def.description ?? ""
-            lines.push(`  ${s.cyan((commandPrefix + name).padEnd(maxLen + commandPrefix.length + 2))}${desc}${aliases}`)
-          }
-          lines.push("")
-          console.write(lines.join("\n"))
-        },
-      }
-      commandMap.set("help", { name: "help", def: helpDef })
-      for (const alias of helpDef.aliases ?? []) {
-        commandMap.set(alias, { name: "help", def: helpDef })
-      }
+  if (commands && !("help" in allCommands)) {
+    allCommands["help"] = {
+      description: "Show available commands",
+      aliases: ["h", "?"],
+      handler: () => {
+        const text = router!.helpText()
+        if (text) {
+          console.write("\n" + text + "\n\n")
+        } else {
+          console.write(s.dim("  No commands available.") + "\n")
+        }
+      },
     }
   }
+
+  const router = commands ? commandRouter(allCommands, commandPrefix) : null
 
   // ── completion: merge command names + user completion ───
 
   function replCompletion(word: string, line: string): string[] {
-    // command completion when line starts with prefix
-    if (line.startsWith(commandPrefix) && commands) {
-      const partial = word.startsWith(commandPrefix) ? word.slice(commandPrefix.length) : word
-      return Object.entries(commands)
-        .filter(([name, def]) => name.startsWith(partial) && !def.hidden)
-        .map(([name]) => commandPrefix + name)
+    if (line.startsWith(commandPrefix) && router) {
+      return router.completions(line)
     }
-
     return completion?.(word, line) ?? []
   }
 
   // ── non-TTY: process piped input ───────────────────────
 
-  if (!isTTY) {
+  if (!interactiveTTY) {
     if (greeting) console.write(greeting + "\n")
     const text = await Bun.stdin.text()
     for (const line of text.split("\n")) {
@@ -550,14 +349,10 @@ export async function repl(options: ReplOptions): Promise<void> {
       if (!trimmed) continue
       if (exitCommands.includes(trimmed.toLowerCase())) break
 
-      if (trimmed.startsWith(commandPrefix) && commands) {
-        const rest = trimmed.slice(commandPrefix.length)
-        const spaceIdx = rest.indexOf(" ")
-        const cmdName = spaceIdx === -1 ? rest : rest.slice(0, spaceIdx)
-        const cmdArgs = spaceIdx === -1 ? "" : rest.slice(spaceIdx + 1).trim()
-        const cmd = commandMap.get(cmdName)
-        if (cmd) {
-          await cmd.def.handler(cmdArgs, new AbortController().signal)
+      if (router) {
+        const match = router.match(trimmed)
+        if (match) {
+          await match.command.handler(match.args, new AbortController().signal)
           continue
         }
       }
@@ -577,11 +372,10 @@ export async function repl(options: ReplOptions): Promise<void> {
 
   let cancelCount = 0
 
-  // C4: Single SIGINT handler — replaced per invocation, never accumulates
+  // Single SIGINT handler — replaced per invocation, never accumulates
   let activeSigInt: (() => void) | null = null
 
   function installSigInt(controller: AbortController): void {
-    // Remove any stale handler before installing new one
     if (activeSigInt) {
       process.removeListener("SIGINT", activeSigInt)
       activeSigInt = null
@@ -642,18 +436,13 @@ export async function repl(options: ReplOptions): Promise<void> {
     if (exitCommands.includes(input.toLowerCase())) break
 
     // ── slash commands ────────────────────────────────
-    if (input.startsWith(commandPrefix) && commands) {
-      const rest = input.slice(commandPrefix.length)
-      const spaceIdx = rest.indexOf(" ")
-      const cmdName = spaceIdx === -1 ? rest : rest.slice(0, spaceIdx)
-      const cmdArgs = spaceIdx === -1 ? "" : rest.slice(spaceIdx + 1).trim()
-
-      const cmd = commandMap.get(cmdName)
-      if (cmd) {
+    if (router) {
+      const match = router.match(input)
+      if (match) {
         const controller = new AbortController()
         installSigInt(controller)
         try {
-          await cmd.def.handler(cmdArgs, controller.signal)
+          await match.command.handler(match.args, controller.signal)
         } catch (err) {
           if ((err as Error)?.name !== "AbortError") {
             console.write(`${s.red("✗")} ${(err as Error)?.message ?? err}\n`)
@@ -665,11 +454,14 @@ export async function repl(options: ReplOptions): Promise<void> {
       }
 
       // unknown command
-      console.write(`${s.red("✗")} Unknown command: ${s.bold(commandPrefix + cmdName)}\n`)
-      if (commandMap.size > 0) {
-        console.write(s.dim(`  Type ${commandPrefix}help for available commands.`) + "\n")
+      if (input.startsWith(commandPrefix)) {
+        const cmdName = input.slice(commandPrefix.length).split(" ")[0]
+        console.write(`${s.red("✗")} Unknown command: ${s.bold(commandPrefix + cmdName)}\n`)
+        if (Object.keys(allCommands).length > 0) {
+          console.write(s.dim(`  Type ${commandPrefix}help for available commands.`) + "\n")
+        }
+        continue
       }
-      continue
     }
 
     // ── regular input: call handler with abort support ─

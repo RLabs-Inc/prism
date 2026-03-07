@@ -20,12 +20,14 @@ export interface ActivityLine {
   /** Render current state as string[] */
   render(): string[]
   /** Render final frozen state with custom icon */
-  freeze(icon: string, color?: (t: string) => string): string[]
+  freeze(icon: string, msg?: string | ((t: string) => string), color?: (t: string) => string): string[]
 }
 
 export interface ActivityLineOptions {
   /** Spinner style name or static icon string (default: "dots") */
   icon?: string | SpinnerStyle
+  /** Custom frames — overrides icon/style frames */
+  frames?: string[]
   /** Override spinner interval in ms */
   interval?: number
   /** Icon/spinner color (default: s.cyan) */
@@ -52,18 +54,18 @@ export function activityLine(text: string, options: ActivityLineOptions = {}): A
     : icon === undefined
       ? spinners.dots
       : null
-  const frames = spinnerDef?.f ?? [icon as string]
+  const frames = options.frames ?? spinnerDef?.f ?? [icon as string]
   const tickInterval = intervalOverride ?? spinnerDef?.ms ?? 80
 
   let idx = 0
   let msg = text
   let handle: ReturnType<typeof setInterval> | null = null
-  const timer_ = timer ? createElapsed() : null
+  const elapsedTimer = timer ? createElapsed() : null
 
   function buildLine(): string {
     const frame = colorFn(frames[idx % frames.length])
     const meta: string[] = []
-    if (timer_) meta.push(timer_.render())
+    if (elapsedTimer) meta.push(elapsedTimer.render())
     if (metrics) meta.push(metrics())
     const metaStr = meta.length > 0 ? s.dim(` (${meta.join(" · ")})`) : ""
     return `${frame} ${msg}${metaStr}`
@@ -71,7 +73,7 @@ export function activityLine(text: string, options: ActivityLineOptions = {}): A
 
   function buildFrozen(endIcon: string, iconColor: (t: string) => string): string {
     const meta: string[] = []
-    if (timer_) meta.push(timer_.render())
+    if (elapsedTimer) meta.push(elapsedTimer.render())
     const metaStr = meta.length > 0 ? s.dim(` (${meta.join(" · ")})`) : ""
     return `${iconColor(endIcon)} ${msg}${metaStr}`
   }
@@ -98,11 +100,16 @@ export function activityLine(text: string, options: ActivityLineOptions = {}): A
       return [buildLine()]
     },
 
-    freeze(endIcon, color) {
+    freeze(endIcon, msgOrColor?, color?) {
       if (handle) {
         clearInterval(handle)
         handle = null
       }
+      // Support both freeze(icon, color?) and freeze(icon, msg, color?)
+      if (typeof msgOrColor === "function") {
+        return [buildFrozen(endIcon, msgOrColor)]
+      }
+      if (typeof msgOrColor === "string") msg = msgOrColor
       return [buildFrozen(endIcon, color ?? s.white)]
     },
   }

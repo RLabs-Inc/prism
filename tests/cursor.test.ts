@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach, mock } from "bun:test"
+import { describe, test, expect, beforeEach, afterEach, mock } from "bun:test"
 import { hideCursor, showCursor, cursorRefCount, resetCursor } from "../src/cursor"
 
 const HIDE = "\x1b[?25l"
@@ -52,5 +52,51 @@ describe("cursor", () => {
     hideCursor()
     resetCursor()
     expect(cursorRefCount()).toBe(0)
+  })
+
+  describe("ANSI output verification", () => {
+    let originalWrite: typeof console.write
+    let written: string[]
+
+    beforeEach(() => {
+      originalWrite = console.write
+      written = []
+      console.write = ((data: any) => {
+        written.push(String(data))
+        return true
+      }) as typeof console.write
+    })
+
+    afterEach(() => {
+      console.write = originalWrite
+      resetCursor()
+    })
+
+    test("first hideCursor writes HIDE escape", () => {
+      hideCursor()
+      expect(written).toContain(HIDE)
+    })
+
+    test("second hideCursor does NOT write", () => {
+      hideCursor()
+      written.length = 0 // clear from first call
+      hideCursor()
+      expect(written).not.toContain(HIDE)
+    })
+
+    test("showCursor writes SHOW when refCount goes to 0", () => {
+      hideCursor()
+      written.length = 0
+      showCursor()
+      expect(written).toContain(SHOW)
+    })
+
+    test("showCursor does NOT write when refCount > 0", () => {
+      hideCursor()
+      hideCursor()
+      written.length = 0
+      showCursor() // refCount goes from 2 to 1
+      expect(written).not.toContain(SHOW)
+    })
   })
 })

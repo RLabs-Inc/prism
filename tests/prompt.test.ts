@@ -312,17 +312,48 @@ describe("input cursor handling", () => {
     expect(source).toContain('key.key === "right"')
   })
 
-  test("input() backspace is cursor-aware (not just slice from end)", async () => {
+  test("input() delegates editing to inputLine", async () => {
     const source = await Bun.file(import.meta.dir + "/../src/prompt.ts").text()
-    // Should use cursor-aware backspace: value.slice(0, cursor - 1) + value.slice(cursor)
-    expect(source).toContain("value.slice(0, cursor - 1) + value.slice(cursor)")
+    expect(source).toContain('import { inputLine }')
+    expect(source).toContain("inp.backspace()")
+    expect(source).toContain("inp.cursorLeft()")
+    expect(source).toContain("inp.cursorRight()")
   })
 
-  test("input() cursor movement is bounded", async () => {
+  test("prompt.ts has no library-level process.exit", async () => {
     const source = await Bun.file(import.meta.dir + "/../src/prompt.ts").text()
-    // Left: cursor > 0, Right: cursor < value.length
-    expect(source).toContain("cursor > 0")
-    expect(source).toContain("cursor < value.length")
+    expect(source).not.toContain("process.exit(")
+  })
+})
+
+// =============================================================================
+// Composable primitive architecture
+// =============================================================================
+
+describe("prompt composable architecture", () => {
+  test("select uses liveBlock for rendering", async () => {
+    const source = await Bun.file(import.meta.dir + "/../src/prompt.ts").text()
+    expect(source).toContain('import { liveBlock }')
+    expect(source).toContain("block.update()")
+    expect(source).toContain("block.close(")
+  })
+
+  test("select uses hideCursor/showCursor instead of raw escape codes", async () => {
+    const source = await Bun.file(import.meta.dir + "/../src/prompt.ts").text()
+    expect(source).toContain('import { hideCursor, showCursor }')
+    expect(source).toContain("hideCursor()")
+    expect(source).toContain("showCursor()")
+    // should NOT have raw HIDE/SHOW constants
+    expect(source).not.toContain('const HIDE = "\\x1b[?25l"')
+    expect(source).not.toContain('const SHOW = "\\x1b[?25h"')
+  })
+
+  test("prompt.ts does not use manual cursor movement for menus", async () => {
+    const source = await Bun.file(import.meta.dir + "/../src/prompt.ts").text()
+    // no manual moveUp tracking — liveBlock handles erase/draw
+    expect(source).not.toContain("moveUp")
+    // no manual line counting for erase
+    expect(source).not.toContain("totalLines")
   })
 })
 

@@ -2,7 +2,9 @@
 // truncate, indent, pad, link, wrap - all ANSI-aware
 // built on Bun.stringWidth(), Bun.stripANSI(), Bun.wrapAnsi()
 
-import { isTTY, termWidth } from "./writer"
+import { ansiEnabled, isTTY, termWidth } from "./writer"
+import { RESET } from "./style"
+import { graphemeSegments } from "./unicode"
 
 /** ANSI-aware text truncation with ellipsis */
 export function truncate(text: string, width: number, ellipsis: string = "…"): string {
@@ -38,18 +40,29 @@ export function truncate(text: string, width: number, ellipsis: string = "…"):
       continue
     }
 
-    // visible character
-    const char = text[i]
-    const cw = Bun.stringWidth(char)
-    if (visibleWidth + cw > targetWidth) break
-    result += char
-    visibleWidth += cw
-    i++
+    const nextEscape = text.indexOf("\x1b", i)
+    const plainEnd = nextEscape === -1 ? text.length : nextEscape
+    const plain = text.slice(i, plainEnd)
+
+    let consumed = 0
+    for (const { segment } of graphemeSegments(plain)) {
+      const cw = Bun.stringWidth(segment)
+      if (visibleWidth + cw > targetWidth) {
+        i += consumed
+        const reset = ansiEnabled ? RESET : ""
+        return (ansiEnabled ? result : Bun.stripANSI(result)) + reset + ellipsis
+      }
+      result += segment
+      visibleWidth += cw
+      consumed += segment.length
+    }
+
+    i = plainEnd
   }
 
   // reset ANSI state before ellipsis to prevent color bleeding
-  const reset = isTTY ? "\x1b[0m" : ""
-  return (isTTY ? result : Bun.stripANSI(result)) + reset + ellipsis
+  const reset = ansiEnabled && result.includes("\x1b[") ? RESET : ""
+  return (ansiEnabled ? result : Bun.stripANSI(result)) + reset + ellipsis
 }
 
 /** Indent every line by level spaces (or custom character) */

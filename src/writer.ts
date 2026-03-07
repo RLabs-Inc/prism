@@ -1,7 +1,9 @@
-// prism/writer - pipe-aware output
-// detects TTY vs pipe and adapts automatically
+// prism/writer - terminal capability detection + low-level output
+// keep terminal shape, interactivity, and ANSI support as separate concepts
 
-const isTTY = Bun.enableANSIColors || process.env.FORCE_COLOR === "1"
+const isTTY = process.stdout.isTTY === true
+const interactiveTTY = isTTY && process.stdin.isTTY === true
+const ansiEnabled = Bun.enableANSIColors || process.env["FORCE_COLOR"] === "1"
 
 /** Write raw text to stdout - no newline, no formatting */
 export function write(text: string): void {
@@ -14,18 +16,19 @@ export function writeln(text: string = ""): void {
 }
 
 /** Write to stderr */
+const stderrWriter = Bun.stderr.writer()
 export function error(text: string): void {
-  Bun.stderr.writer().write(text + "\n")
+  stderrWriter.write(text + "\n")
 }
 
-/** Strip ANSI codes if not a TTY (piped output) */
+/** Strip ANSI codes unless ANSI output is enabled */
 export function pipeAware(text: string): string {
-  return isTTY ? text : Bun.stripANSI(text)
+  return ansiEnabled ? text : Bun.stripANSI(text)
 }
 
-/** Get terminal width, defaulting to 80 if not a TTY */
+/** Get terminal width, defaulting to 80 if columns is 0 or unavailable */
 export function termWidth(): number {
-  return process.stdout.columns ?? 80
+  return process.stdout.columns || 80
 }
 
 /** Calculate visual rows a line occupies (accounting for terminal wrapping) */
@@ -36,5 +39,5 @@ export function visualRows(line: string, width?: number): number {
   return Math.ceil(w / cols)
 }
 
-/** Whether we're outputting to a real terminal */
-export { isTTY }
+/** Whether stdout is a real terminal */
+export { ansiEnabled, interactiveTTY, isTTY }

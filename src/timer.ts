@@ -23,12 +23,12 @@ export function formatTime(ms: number): string {
 
 // --- Stopwatch ---
 
-interface StopwatchResult {
+export interface StopwatchResult {
   ms: number
   formatted: string
 }
 
-interface Stopwatch {
+export interface Stopwatch {
   /** Get elapsed time without stopping */
   elapsed(): StopwatchResult
   /** Stop and return final elapsed time */
@@ -81,7 +81,7 @@ export function stopwatch(label?: string): Stopwatch {
 
 // --- Countdown ---
 
-interface CountdownOptions {
+export interface CountdownOptions {
   /** Update interval in ms (default: 1000) */
   interval?: number
   /** Color function (default: s.yellow) */
@@ -90,7 +90,7 @@ interface CountdownOptions {
   onComplete?: () => void
 }
 
-interface Countdown {
+export interface Countdown {
   /** Cancel the countdown */
   cancel(): void
 }
@@ -115,7 +115,8 @@ export function countdown(seconds: number, label: string, options: CountdownOpti
 
     if (remaining <= 0) {
       clearInterval(handle)
-      console.write(`${CR}${CLR}${s.green("✓")} ${label} ${s.dim("complete")}\n`)
+      if (isTTY) console.write(`${CR}${CLR}${s.green("✓")} ${label} ${s.dim("complete")}\n`)
+      else console.write(`${s.green("✓")} ${label} ${s.dim("complete")}\n`)
       onComplete?.()
       return
     }
@@ -127,14 +128,15 @@ export function countdown(seconds: number, label: string, options: CountdownOpti
     cancel() {
       cancelled = true
       clearInterval(handle)
-      console.write(`${CR}${CLR}${s.dim("⏹")} ${label} ${s.dim("cancelled")}\n`)
+      if (isTTY) console.write(`${CR}${CLR}${s.dim("⏹")} ${label} ${s.dim("cancelled")}\n`)
+      else console.write(`${s.dim("⏹")} ${label} ${s.dim("cancelled")}\n`)
     },
   }
 }
 
 // --- Benchmark helper ---
 
-interface BenchResult {
+export interface BenchResult {
   name: string
   ms: number
   ops: number
@@ -143,6 +145,10 @@ interface BenchResult {
 
 /** Benchmark a function, running it N times and reporting stats. */
 export async function bench(name: string, fn: () => void | Promise<void>, iterations: number = 1000): Promise<BenchResult> {
+  if (!Number.isInteger(iterations) || iterations <= 0) {
+    throw new RangeError("iterations must be a positive integer")
+  }
+
   // warmup
   for (let i = 0; i < Math.min(10, iterations); i++) await fn()
 
